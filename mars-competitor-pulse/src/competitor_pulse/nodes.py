@@ -143,11 +143,16 @@ def _competitors_from_update(full: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _mars_stream_safe_update(full: dict[str, Any]) -> dict[str, Any]:
-    """Drop internal/competitors keys from node stream updates."""
+    """Drop internal/competitors/chat_ack from node stream updates.
+
+    ``chat_ack`` is rebuilt in report from ``watch_names`` — returning it from
+    intake *and* execute_pulse made doctl concatenate the ack multiple times
+    before the final AIMessage (which also embeds the ack).
+    """
     return {
         key: value
         for key, value in full.items()
-        if key not in {"watchlist", "competitors", "internal"}
+        if key not in {"watchlist", "competitors", "internal", "chat_ack"}
     }
 
 
@@ -158,7 +163,6 @@ def _mars_safe_pulse_update(state: dict[str, Any]) -> dict[str, Any]:
         "watch_names": _watch_names_from(watchlist),
     }
     passthrough = (
-        "chat_ack",
         "notify",
         "channel",
         "fixture_dir",
@@ -907,8 +911,34 @@ def act(state: PulseState) -> dict[str, Any]:
     }
 
 
+
+def _chat_ack_from_state(state: PulseState | dict[str, Any]) -> str:
+    """Rebuild plain-English ack (chat_ack is omitted from MARS stream updates)."""
+    existing = (state.get("chat_ack") or "").strip()
+    if existing:
+        return existing
+    names = list(state.get("watch_names") or [])
+    if not names:
+        names = _watch_names_from(_state_competitors(state))
+    if not names:
+        return ""
+    if len(names) == 1:
+        lead = f"Got it — setting up a watch on **{names[0]}**."
+    else:
+        lead = f"Got it — watching **{', '.join(names)}**."
+    fetch_mode = (
+        "Live public fetch is **on**."
+        if state.get("allow_net")
+        else "Using offline fixtures (live fetch off)."
+    )
+    return (
+        f"{lead}\n{fetch_mode}\n"
+        "I'll pull snapshots and compare against any saved baseline."
+    )
+
+
 def _format_first_run_report(state: PulseState) -> str:
-    ack = state.get("chat_ack") or ""
+    ack = _chat_ack_from_state(state)
     deltas = list(state.get("deltas") or [])
     names = sorted({d.get("competitor") or "?" for d in deltas})
     if not names:
@@ -929,7 +959,7 @@ def _format_quiet_report(state: PulseState) -> str:
         names = _watch_names_from(_state_competitors(state))
     modules = list(state.get("modules") or [])
     body = quiet_message(names, modules)
-    ack = state.get("chat_ack") or ""
+    ack = _chat_ack_from_state(state)
     if ack:
         return f"{ack}\n\n{body}"
     return body

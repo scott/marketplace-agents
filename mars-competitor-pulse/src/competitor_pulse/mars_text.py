@@ -53,12 +53,14 @@ def assemble_doctl_prompt_text(
     state), concatenating:
     1. Serialized input list fields when the exported input schema includes them
     2. Each node update's ``watchlist`` / ``competitors`` / ``internal.*`` when present
-    3. Prose string fields from stream updates
+       (must be absent after stream-safe returns — presence is a regression)
+    3. Prose string fields from stream updates (``chat_ack`` must not appear)
     4. Each streamed ``AIMessage`` content
     5. Final output ``messages`` not already appended (same content deduped)
 
-    Chat path is intake→END with one AIMessage (diag-shaped) so step 4+5 should
-    not double after content dedupe.
+    Chat path is intake→END with one AIMessage (diag-shaped) + Sol templates only
+    (no llm.invoke on converse/watchlist parse) so MARS cannot prefix JSON or
+    double the greeting via harness token streams.
     """
     text = ""
     seen_ai: set[str] = set()

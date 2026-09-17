@@ -119,3 +119,45 @@ def test_intake_notify_from_nl(monkeypatch):
     )
     assert result["notify"] is True
     assert any(item["name"] == "Cursor" for item in watchlist_from_state(result))
+
+
+def test_parse_hi_never_calls_llm_watchlist(monkeypatch):
+    """Regression: generic hi must not invoke watchlist LLM (MARS JSON leak)."""
+    called = {"n": 0}
+
+    def boom(text):
+        called["n"] += 1
+        raise AssertionError("llm watchlist must not run for hi")
+
+    monkeypatch.setenv("HARNESS_INFERENCE_API_KEY", "test-key")
+    monkeypatch.setenv("COMPETITOR_PULSE_LLM_PARSE", "1")
+    monkeypatch.setattr(
+        "competitor_pulse.intake_parse._llm_watchlist",
+        boom,
+    )
+    from competitor_pulse.intake_parse import parse_watchlist_from_message
+
+    result = parse_watchlist_from_message("hi")
+    assert result["is_generic"] is True
+    assert result["competitors"] == []
+    assert result["source"] == "none"
+    assert called["n"] == 0
+
+
+def test_parse_track_fedex_offline_without_llm(monkeypatch):
+    """Unknown single company → empty here; intake uses parse_track_message."""
+    monkeypatch.delenv("COMPETITOR_PULSE_LLM_PARSE", raising=False)
+    monkeypatch.setenv("HARNESS_INFERENCE_API_KEY", "test-key")
+    monkeypatch.setenv("HARNESS_INFERENCE_BASE_URL", "https://example.invalid/v1")
+    monkeypatch.setenv("HARNESS_INFERENCE_MODEL", "dummy")
+
+    def boom(*_a, **_k):
+        raise AssertionError("llm watchlist must stay off by default")
+
+    monkeypatch.setattr("competitor_pulse.llm.get_llm", boom)
+    from competitor_pulse.intake_parse import parse_watchlist_from_message
+
+    result = parse_watchlist_from_message("track fedex")
+    assert result["is_tracking_request"] is True
+    assert result["competitors"] == []
+    assert result["source"] == "none"

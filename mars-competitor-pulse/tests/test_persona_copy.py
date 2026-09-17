@@ -65,3 +65,19 @@ def test_material_brief_has_no_counter_review_prefix():
     assert "homepage / product site" not in brief  # pricing module
     assert "pricing page" in brief
     assert "public web only" in PULSE_SYSTEM_PROMPT.lower() or "Public web only" in PULSE_SYSTEM_PROMPT
+
+
+def test_conversational_reply_ignores_harness_llm(monkeypatch):
+    """Chat path must not llm.invoke — MARS would duplicate greeting in doctl text."""
+    monkeypatch.setenv("HARNESS_INFERENCE_API_KEY", "test-key")
+    monkeypatch.setenv("HARNESS_INFERENCE_BASE_URL", "https://example.invalid/v1")
+    monkeypatch.setenv("HARNESS_INFERENCE_MODEL", "dummy")
+
+    def boom(*_a, **_k):
+        raise AssertionError("converse must not call get_llm")
+
+    monkeypatch.setattr("competitor_pulse.llm.get_llm", boom)
+    from competitor_pulse.converse import conversational_reply
+    from competitor_pulse.persona import welcome_message
+
+    assert conversational_reply("chat", "hi") == welcome_message()

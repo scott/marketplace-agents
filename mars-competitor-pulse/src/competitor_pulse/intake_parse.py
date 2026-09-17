@@ -275,6 +275,12 @@ def _offline_watchlist(text: str) -> list[dict[str, Any]]:
 
 
 def _llm_watchlist(text: str) -> list[dict[str, Any]] | None:
+    """Opt-in only — MARS streams llm.invoke JSON into doctl ``text``."""
+    import os
+
+    flag = (os.environ.get("COMPETITOR_PULSE_LLM_PARSE") or "").strip().lower()
+    if flag not in {"1", "true", "yes", "on"}:
+        return None
     try:
         from competitor_pulse.llm import get_llm, harness_env_available
 
@@ -329,6 +335,12 @@ def parse_watchlist_from_message(text: str) -> dict[str, Any]:
       is_tracking_request: bool
       is_generic: bool
       source: "offline" | "llm" | "none"
+
+    MARS/doctl concatenates harness ``llm.invoke`` outputs into prompt ``text``.
+    Never call the LLM for generic/chat messages (that streamed
+    ``{"competitors":[]}`` on ``hi``). Prefer offline aliases; tracking fallback
+    to ``parse_track_message`` lives in intake. LLM parse is opt-in only via
+    ``COMPETITOR_PULSE_LLM_PARSE=1`` (off by default).
     """
     stripped = (text or "").strip()
     result: dict[str, Any] = {
@@ -342,12 +354,17 @@ def parse_watchlist_from_message(text: str) -> dict[str, Any]:
     if not stripped:
         return result
 
+    # Chat/help/banter must not invoke the watchlist LLM (JSON leaks into doctl text).
+    if result["is_generic"] or not result["is_tracking_request"]:
+        return result
+
     offline = _offline_watchlist(stripped)
     if offline:
         result["competitors"] = offline
         result["source"] = "offline"
         return result
 
+    # Default: leave empty so intake can use parse_track_message without LLM JSON.
     llm_list = _llm_watchlist(stripped)
     if llm_list:
         result["competitors"] = _attach_urls(llm_list, stripped)
