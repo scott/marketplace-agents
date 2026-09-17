@@ -7,7 +7,6 @@ from typing import Any
 
 from competitor_pulse.intake_parse import (
     is_generic_message,
-    is_tracking_request,
     parse_watchlist_from_message,
 )
 
@@ -16,6 +15,7 @@ _CHAT_RE = re.compile(
     r"hi|hello|hey|yo|sup|howdy|hiya|"
     r"good\s+(?:morning|afternoon|evening)|"
     r"what'?s\s+up|whats\s+up|"
+    r"what'?s\s+good|whats\s+good|"
     r"run|go|start|ok|okay|yes|yep|sure|"
     r"please|thanks|thank\s+you|thx|cheers|nice|cool|"
     r"lol|haha|ha|"
@@ -68,6 +68,22 @@ def is_help_message(text: str) -> bool:
     return bool(_HELP_RE.search((text or "").strip()))
 
 
+def _has_overlay_pulse(
+    *,
+    overlay_watchlist: list[dict[str, Any]] | None,
+    overlay_preset: str | None,
+    human_text: str,
+) -> bool:
+    if overlay_watchlist:
+        return True
+    preset = (overlay_preset or "").strip().lower()
+    if preset == "spacexai":
+        return True
+    if "SPACEXAI_PRESET" in (human_text or ""):
+        return True
+    return False
+
+
 def classify_intent(
     human_text: str,
     *,
@@ -80,35 +96,66 @@ def classify_intent(
 
     ``pulse`` keeps the existing watchlist → gather → analyze workflow.
     Programmatic invokes with no human text still route to ``pulse``.
+
+    Order:
+    1. Empty human + no overlay pulse signals → pulse (programmatic)
+    2. Overlay watchlist / spacexai preset → pulse
+    3. Parsed competitors/watchlist → pulse
+    4. Clear help regex → help (before bare ``watch`` tracking — e.g. modules help)
+    5. Non-generic tracking request → pulse
+    6. Clear chat regex / is_generic_message → chat
+    7. Else if API key: direct-HTTP LLM classify (stream:false)
+    8. Else → other
+
+    Never short-circuit to pulse solely because ``state_watchlist`` is already
+    set — greetings/help after a track must still route chat/help.
+    ``state_watchlist`` is accepted for API compatibility but ignored for routing.
     """
-    if state_watchlist:
-        return "pulse"
-
-    if overlay_watchlist:
-        return "pulse"
-
-    preset = (overlay_preset or "").strip().lower()
-    if preset == "spacexai" or "SPACEXAI_PRESET" in (human_text or ""):
-        return "pulse"
+    _ = state_watchlist  # intentionally unused for routing (see docstring)
 
     stripped = (human_text or "").strip()
+    overlay_pulse = _has_overlay_pulse(
+        overlay_watchlist=overlay_watchlist,
+        overlay_preset=overlay_preset,
+        human_text=human_text or "",
+    )
 
-    # Fixture / smoke path when invoked without chat text.
-    if not stripped:
+    # 1. Empty human + no overlays → pulse (programmatic / fixture path)
+    if not stripped and not overlay_pulse:
+        return "pulse"
+
+    # 2. Overlay / preset pulse
+    if overlay_pulse:
         return "pulse"
 
     parsed = parsed_nl if parsed_nl is not None else parse_watchlist_from_message(stripped)
 
-    if is_help_message(stripped):
-        return "help"
-
+    # 3. Resolved competitors from NL → pulse
     if parsed.get("competitors") or parsed.get("watchlist"):
         return "pulse"
 
+    # 4. Clear help (before tracking keyword "watch" in help questions)
+    if stripped and is_help_message(stripped):
+        return "help"
+
+    # 5. Tracking request without being generic chat
     if parsed.get("is_tracking_request") and not parsed.get("is_generic"):
         return "pulse"
 
-    if is_chat_message(stripped):
+    # 6. Clear chat / generic openers
+    if stripped and is_chat_message(stripped):
         return "chat"
 
+    # 7. LLM classify (direct HTTP) when key present
+    if stripped:
+        try:
+            from competitor_pulse.intent_llm import classify_intent_llm
+
+            llm_intent = classify_intent_llm(stripped)
+            if llm_intent in {"chat", "help", "pulse", "other"}:
+                return llm_intent
+        except Exception:
+            pass
+
+    # 8. Offline / failure fallback
     return "other"

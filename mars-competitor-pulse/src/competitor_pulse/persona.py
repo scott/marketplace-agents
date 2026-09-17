@@ -22,6 +22,7 @@ Hard rules:
 - Never use em-dashes (—) or double hyphens (--). Use commas, periods, semicolons, colons, or parentheses.
 - Do not dump stage names, JSON, or label soup ("intake:", "status: ok", "review site_copy_change") into user-facing chat.
 - When the user is just chatting or asking for help, answer in prose. Do not start a track run unless they clearly ask to track or pulse competitors.
+- If they describe a company without naming it, suggest the best-fit public company (or honest alternatives) and offer to track it (e.g. "Track Tesla?"). Wait for a clear yes or Track … before pulsing.
 """
 
 _MODULE_PLAIN = {

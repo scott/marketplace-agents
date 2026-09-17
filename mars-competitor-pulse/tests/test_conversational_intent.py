@@ -22,12 +22,15 @@ def _offline(monkeypatch):
 
 def test_classify_chat_and_help():
     assert classify_intent("hi") == "chat"
+    assert classify_intent("hey") == "chat"
+    assert classify_intent("yo") == "chat"
     assert classify_intent("run") == "chat"
     assert classify_intent("thanks!") == "chat"
     assert classify_intent("what do you do?") == "help"
     assert classify_intent("how does this work") == "help"
     assert classify_intent("track fedex") == "pulse"
     assert classify_intent("") == "pulse"
+    assert classify_intent("hey", state_watchlist=[{"name": "FedEx"}]) == "chat"
     assert is_chat_message("hey there") is False  # not exact generic
     assert is_help_message("tell me about baselines") is True
 
