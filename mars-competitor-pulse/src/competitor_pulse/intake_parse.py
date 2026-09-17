@@ -105,6 +105,22 @@ _KNOWN_COMPANIES: dict[str, dict[str, Any]] = {
             "site": "https://www.apple.com/apple-intelligence/",
         },
     },
+    "Tesla": {
+        "name": "Tesla",
+        "urls": {
+            "site": "https://www.tesla.com/",
+            "pricing": "https://www.tesla.com/",
+            "careers": "https://www.tesla.com/careers",
+        },
+    },
+    "FedEx": {
+        "name": "FedEx",
+        "urls": {
+            "site": "https://www.fedex.com/",
+            "pricing": "https://www.fedex.com/en-us/shipping-rates.html",
+            "careers": "https://careers.fedex.com/",
+        },
+    },
 }
 
 # Alias token -> canonical company name (longest aliases first at match time).
@@ -138,6 +154,10 @@ _ALIAS_TO_CANONICAL: dict[str, str] = {
     "amazon": "Amazon Bedrock",
     "apple intelligence": "Apple Intelligence",
     "apple": "Apple Intelligence",
+    "tesla": "Tesla",
+    "tsla": "Tesla",
+    "fedex": "FedEx",
+    "federal express": "FedEx",
 }
 
 _SORTED_ALIASES: list[tuple[str, str]] = sorted(
@@ -158,6 +178,17 @@ _NOTIFY_OFF_RE = re.compile(
     r"\b(?:no notify|notify off|don'?t notify|without notify)\b",
     re.IGNORECASE,
 )
+# Filler phrases that make dumb parse_track_message capture garbage ("a track for Tesla too").
+_MESSY_TRACK_RE = re.compile(
+    r"\b(?:add|lets?|let's|please)\b|\b(?:a|an|the)\s+(?:track|watch|monitor|pulse)\b|"
+    r"\b(?:track|watch|monitor|pulse)\s+(?:a|an|the|for)\b|"
+    r"\b(?:too|also|another|as well)\b",
+    re.IGNORECASE,
+)
+_MERGE_RE = re.compile(
+    r"\b(?:add|also|too|another|plus|as well)\b",
+    re.IGNORECASE,
+)
 
 
 def is_tracking_request(text: str) -> bool:
@@ -169,6 +200,16 @@ def is_generic_message(text: str) -> bool:
     if not stripped:
         return True
     return bool(_GENERIC_RE.match(stripped))
+
+
+def is_merge_request(text: str) -> bool:
+    """True when the operator wants to add to an existing watchlist."""
+    return bool(_MERGE_RE.search(text or ""))
+
+
+def looks_messy_track_phrase(text: str) -> bool:
+    """True for filler-heavy track phrases that need alias/LLM, not dumb regex."""
+    return bool(_MESSY_TRACK_RE.search(text or ""))
 
 
 def parse_notify_from_message(text: str) -> bool | None:
@@ -274,54 +315,91 @@ def _offline_watchlist(text: str) -> list[dict[str, Any]]:
     return _attach_urls(watchlist, text)
 
 
-def _llm_watchlist(text: str) -> list[dict[str, Any]] | None:
-    """Opt-in only — MARS streams llm.invoke JSON into doctl ``text``."""
+def _llm_parse_enabled() -> bool:
+    """LLM watchlist extract is ON by default when an API key is present.
+
+    Kill-switch: ``COMPETITOR_PULSE_LLM_PARSE=0`` (or false/off/no) forces offline only.
+    """
     import os
 
     flag = (os.environ.get("COMPETITOR_PULSE_LLM_PARSE") or "").strip().lower()
-    if flag not in {"1", "true", "yes", "on"}:
+    if flag in {"0", "false", "no", "off"}:
+        return False
+    return True
+
+
+def _parse_competitors_json(content: str) -> list[dict[str, Any]] | None:
+    content = (content or "").strip()
+    if not content:
+        return None
+    fence = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", content, re.DOTALL)
+    if fence:
+        content = fence.group(1).strip()
+    brace = re.search(r"\{.*\}", content, re.DOTALL)
+    if brace:
+        content = brace.group(0)
+    try:
+        parsed = json.loads(content)
+    except json.JSONDecodeError:
+        return None
+    raw_list = None
+    if isinstance(parsed, dict):
+        raw_list = parsed.get("competitors") or parsed.get("watchlist")
+    if not isinstance(raw_list, list):
+        return None
+    cleaned: list[dict[str, Any]] = []
+    for item in raw_list:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+        # Reject filler garbage names from bad extractions.
+        lowered = name.lower()
+        if lowered in {"a track", "track", "watch", "monitor", "pulse", "competitors"}:
+            continue
+        if lowered.startswith("a track for") or lowered.startswith("a watch for"):
+            continue
+        urls = item.get("urls") if isinstance(item.get("urls"), dict) else {}
+        cleaned.append({"name": name, "urls": {k: str(v) for k, v in urls.items() if v}})
+    return cleaned or None
+
+
+def _llm_watchlist(text: str) -> list[dict[str, Any]] | None:
+    """Extract competitors via direct HTTP chat_completions (stream:false).
+
+    Never uses ``get_llm()`` / ``llm.invoke`` — MARS concatenates those streams
+    into doctl ``text``. ON by default when an API key is present; set
+    ``COMPETITOR_PULSE_LLM_PARSE=0`` to force offline-only.
+    """
+    if not _llm_parse_enabled():
         return None
     try:
-        from competitor_pulse.llm import get_llm, harness_env_available
+        from competitor_pulse.intent_llm import chat_completions
+        from competitor_pulse.llm import harness_env_available
 
         if not harness_env_available():
             return None
 
-        llm = get_llm(temperature=0)
-        prompt = (
-            "Extract companies to track from the user message. "
-            "Return ONLY valid JSON: "
-            '{"competitors":[{"name":"Company","urls":{"site":"https://...","pricing":"https://...","changelog":"https://..."}}]}. '
-            "Include best-effort public HTTPS URLs when obvious. "
-            f"User message:\n{text}"
+        system = (
+            "Extract companies the user wants to track/watch/pulse/monitor. "
+            "Return ONLY valid JSON (no markdown prose): "
+            '{"competitors":[{"name":"Company","urls":{"site":"https://...","pricing":"https://...","changelog":"https://...","careers":"https://..."}}]}. '
+            "Use real public company names (e.g. Tesla, FedEx), never filler phrases "
+            "like 'a track for …'. Include best-effort HTTPS URLs when obvious. "
+            'If no companies, return {"competitors":[]}.'
         )
-        response = llm.invoke(prompt)
-        content = getattr(response, "content", "") or ""
-        if isinstance(content, list):
-            content = " ".join(str(part) for part in content)
-        content = str(content).strip()
-        fence = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", content, re.DOTALL)
-        if fence:
-            content = fence.group(1).strip()
-        brace = re.search(r"\{.*\}", content, re.DOTALL)
-        if brace:
-            content = brace.group(0)
-        parsed = json.loads(content)
-        raw_list = None
-        if isinstance(parsed, dict):
-            raw_list = parsed.get("competitors") or parsed.get("watchlist")
-        if not isinstance(raw_list, list):
+        content = chat_completions(
+            [
+                {"role": "system", "content": system},
+                {"role": "user", "content": text},
+            ],
+            temperature=0.0,
+            max_tokens=500,
+        )
+        if not content:
             return None
-        cleaned: list[dict[str, Any]] = []
-        for item in raw_list:
-            if not isinstance(item, dict):
-                continue
-            name = str(item.get("name") or "").strip()
-            if not name:
-                continue
-            urls = item.get("urls") if isinstance(item.get("urls"), dict) else {}
-            cleaned.append({"name": name, "urls": {k: str(v) for k, v in urls.items() if v}})
-        return cleaned or None
+        return _parse_competitors_json(content)
     except Exception:
         return None
 
@@ -334,13 +412,14 @@ def parse_watchlist_from_message(text: str) -> dict[str, Any]:
       notify: bool | None
       is_tracking_request: bool
       is_generic: bool
+      is_merge: bool
       source: "offline" | "llm" | "none"
 
-    MARS/doctl concatenates harness ``llm.invoke`` outputs into prompt ``text``.
-    Never call the LLM for generic/chat messages (that streamed
-    ``{"competitors":[]}`` on ``hi``). Prefer offline aliases; tracking fallback
-    to ``parse_track_message`` lives in intake. LLM parse is opt-in only via
-    ``COMPETITOR_PULSE_LLM_PARSE=1`` (off by default).
+    Prefer offline aliases. When empty or the phrase looks messy (filler like
+    "add a track for …"), call LLM extract via ``intent_llm.chat_completions``
+    (stream:false) — never ``get_llm``/``llm.invoke``. Kill-switch
+    ``COMPETITOR_PULSE_LLM_PARSE=0`` forces offline only. Never call the LLM for
+    generic/chat messages.
     """
     stripped = (text or "").strip()
     result: dict[str, Any] = {
@@ -348,23 +427,27 @@ def parse_watchlist_from_message(text: str) -> dict[str, Any]:
         "notify": parse_notify_from_message(stripped),
         "is_tracking_request": is_tracking_request(stripped),
         "is_generic": is_generic_message(stripped),
+        "is_merge": is_merge_request(stripped),
         "source": "none",
     }
 
     if not stripped:
         return result
 
-    # Chat/help/banter must not invoke the watchlist LLM (JSON leaks into doctl text).
+    # Chat/help/banter must not invoke the watchlist LLM.
     if result["is_generic"] or not result["is_tracking_request"]:
         return result
 
     offline = _offline_watchlist(stripped)
     if offline:
+        # Alias map wins even for filler phrases ("add a track for Tesla too").
         result["competitors"] = offline
         result["source"] = "offline"
         return result
 
-    # Default: leave empty so intake can use parse_track_message without LLM JSON.
+    # Empty / unknown names: LLM extract (stream:false) when enabled + key present.
+    # Filler phrases ("add a track for …") are rejected by parse_track_message;
+    # prefer LLM here over inventing garbage company names.
     llm_list = _llm_watchlist(stripped)
     if llm_list:
         result["competitors"] = _attach_urls(llm_list, stripped)

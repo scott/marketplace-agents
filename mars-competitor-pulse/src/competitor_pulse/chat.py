@@ -16,23 +16,39 @@ _MODULE_LABELS = {
 
 
 def parse_track_message(text: str) -> list[dict[str, Any]] | None:
-    """Extract a watchlist from natural language like 'track fedex' or 'watch FedEx'."""
+    """Simple patterns only: ``track FedEx`` / ``watch Acme``.
+
+    Rejects filler phrases (``add a track for Tesla too``) that used to become
+    garbage names like ``A Track For Tesla Too``. Prefer alias/LLM intake for
+    natural language; this is a last-resort single-company fallback.
+    """
     if not text or not text.strip():
         return None
-    lowered = text.strip().lower()
-    m = re.search(
-        r"\b(?:track|watch|monitor|pulse|add)\s+([a-z0-9][a-z0-9\s&.\-]{0,40})",
-        lowered,
+    stripped = text.strip()
+    # Whole-message simple form: optional please + verb + 1–3 name tokens.
+    m = re.match(
+        r"(?:please\s+)?"
+        r"(?:track|watch|monitor|pulse(?:\s+on)?)\s+"
+        r"([A-Za-z0-9][A-Za-z0-9&.\-]*(?:\s+[A-Za-z0-9][A-Za-z0-9&.\-]*){0,2})"
+        r"(?:\s+competitors?)?"
+        r"(?:\s+(?:please|now|today|for\s+me))?"
+        r"\s*[!.?]?\s*$",
+        stripped,
         re.I,
     )
     if not m:
         return None
     raw = m.group(1).strip()
-    raw = re.sub(r"\s+(please|now|today|for me)$", "", raw, flags=re.I)
-    raw = re.sub(r"\s+competitors?$", "", raw, flags=re.I)
     if not raw:
         return None
-    # Multi-unknown names should fall through to blocked intake, not guess URLs.
+    # Ban filler / verb tokens that indicate a multi-word garbage capture.
+    banned = {
+        "a", "an", "the", "for", "to", "too", "also", "add", "track", "watch",
+        "monitor", "pulse", "on", "lets", "let", "please",
+    }
+    tokens = raw.lower().split()
+    if any(tok in banned for tok in tokens):
+        return None
     if re.search(r"\s+and\s+", raw, flags=re.I):
         return None
     name = " ".join(part.capitalize() for part in raw.split())

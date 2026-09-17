@@ -31,7 +31,11 @@ from competitor_pulse.persona import (
     material_chat_message,
     quiet_message,
 )
-from competitor_pulse.intake_parse import parse_notify_from_message, parse_watchlist_from_message
+from competitor_pulse.intake_parse import (
+    is_merge_request,
+    parse_notify_from_message,
+    parse_watchlist_from_message,
+)
 from competitor_pulse.pulse_diff import (
     allow_network,
     default_baseline_path,
@@ -289,6 +293,25 @@ def _apply_intake_overlay(state: PulseState, payload: dict[str, Any]) -> dict[st
     return out
 
 
+def _merge_competitors(
+    existing: list[dict[str, Any]],
+    incoming: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Append incoming competitors by case-insensitive name; keep existing URLs."""
+    out = [{**item, "urls": dict(item.get("urls") or {})} for item in existing]
+    seen = {(item.get("name") or "").strip().lower() for item in out if item.get("name")}
+    for item in incoming:
+        name = (item.get("name") or "").strip()
+        if not name:
+            continue
+        key = name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"name": name, "urls": dict(item.get("urls") or {})})
+    return out
+
+
 def _resolve_competitors(
     state: PulseState,
     overlay: dict[str, Any],
@@ -296,9 +319,10 @@ def _resolve_competitors(
 ) -> dict[str, Any]:
     """Resolve competitor list with source metadata for intake defaults."""
     overlay_list = overlay.get("competitors") or overlay.get("watchlist")
-    watchlist = list(overlay_list or _state_competitors(state))
-    if watchlist:
-        return {"competitors": watchlist, "from_nl": False, "blocked": False}
+    if isinstance(overlay_list, list) and overlay_list:
+        return {"competitors": list(overlay_list), "from_nl": False, "blocked": False}
+
+    state_list = _state_competitors(state)
 
     preset = (overlay.get("preset") or "").strip().lower()
     if preset == "spacexai" or "SPACEXAI_PRESET" in human_text:
@@ -312,7 +336,18 @@ def _resolve_competitors(
     nl_competitors = list(
         parsed.get("competitors") or parsed.get("watchlist") or []
     )
+    merge = bool(parsed.get("is_merge") or is_merge_request(human_text))
+
     if nl_competitors:
+        if merge and state_list:
+            merged = _merge_competitors(state_list, nl_competitors)
+            return {
+                "competitors": merged,
+                "from_nl": True,
+                "blocked": False,
+                "notify": parsed.get("notify"),
+                "source": parsed.get("source"),
+            }
         return {
             "competitors": nl_competitors,
             "from_nl": True,
@@ -322,8 +357,17 @@ def _resolve_competitors(
         }
 
     if parsed.get("is_tracking_request") and not parsed.get("is_generic"):
+        # Simple ``track FedEx`` only — never filler ``add a track for …``.
         fallback = parse_track_message(human_text)
         if fallback:
+            if merge and state_list:
+                return {
+                    "competitors": _merge_competitors(state_list, fallback),
+                    "from_nl": True,
+                    "blocked": False,
+                    "notify": parsed.get("notify"),
+                    "source": "offline",
+                }
             return {
                 "competitors": fallback,
                 "from_nl": True,
@@ -341,6 +385,10 @@ def _resolve_competitors(
                 "Please name specific competitors (e.g. OpenAI, Anthropic, Cursor)."
             ),
         }
+
+    # No new tracking names in this message — keep existing watchlist if any.
+    if state_list:
+        return {"competitors": state_list, "from_nl": False, "blocked": False}
 
     if not human_text.strip():
         return {

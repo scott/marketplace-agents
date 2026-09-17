@@ -145,19 +145,130 @@ def test_parse_hi_never_calls_llm_watchlist(monkeypatch):
 
 
 def test_parse_track_fedex_offline_without_llm(monkeypatch):
-    """Unknown single company → empty here; intake uses parse_track_message."""
-    monkeypatch.delenv("COMPETITOR_PULSE_LLM_PARSE", raising=False)
+    """FedEx is a known alias → offline; kill-switch keeps LLM dark."""
+    monkeypatch.setenv("COMPETITOR_PULSE_LLM_PARSE", "0")
     monkeypatch.setenv("HARNESS_INFERENCE_API_KEY", "test-key")
     monkeypatch.setenv("HARNESS_INFERENCE_BASE_URL", "https://example.invalid/v1")
     monkeypatch.setenv("HARNESS_INFERENCE_MODEL", "dummy")
 
     def boom(*_a, **_k):
-        raise AssertionError("llm watchlist must stay off by default")
+        raise AssertionError("llm watchlist must not run when PARSE=0")
 
     monkeypatch.setattr("competitor_pulse.llm.get_llm", boom)
+    monkeypatch.setattr(
+        "competitor_pulse.intent_llm.chat_completions",
+        boom,
+    )
     from competitor_pulse.intake_parse import parse_watchlist_from_message
 
     result = parse_watchlist_from_message("track fedex")
     assert result["is_tracking_request"] is True
-    assert result["competitors"] == []
-    assert result["source"] == "none"
+    assert [c["name"] for c in result["competitors"]] == ["FedEx"]
+    assert result["source"] == "offline"
+
+
+def test_parse_add_track_for_tesla_too_offline_alias(monkeypatch):
+    """Scott's live bug phrase → Tesla via alias, never 'A Track For Tesla Too'."""
+    monkeypatch.setenv("COMPETITOR_PULSE_LLM_PARSE", "0")
+    monkeypatch.delenv("HARNESS_INFERENCE_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    from competitor_pulse.intake_parse import parse_watchlist_from_message
+    from competitor_pulse.chat import parse_track_message
+
+    result = parse_watchlist_from_message("Lets add a track for Tesla too")
+    names = [c["name"] for c in result["competitors"]]
+    assert names == ["Tesla"]
+    assert result["source"] == "offline"
+    assert result["is_merge"] is True
+    # Dumb regex must not invent a garbage company name for this phrase.
+    assert parse_track_message("Lets add a track for Tesla too") is None
+
+
+def test_llm_watchlist_uses_chat_completions_stream_false(monkeypatch):
+    """LLM parse uses intent_llm.chat_completions (stream:false), never get_llm."""
+    import json
+    from competitor_pulse import intent_llm
+    from competitor_pulse import intake_parse
+
+    monkeypatch.delenv("COMPETITOR_PULSE_LLM_PARSE", raising=False)  # ON by default
+    monkeypatch.setenv("HARNESS_INFERENCE_API_KEY", "test-key")
+    monkeypatch.setenv("HARNESS_INFERENCE_BASE_URL", "https://example.invalid/v1")
+    monkeypatch.setenv("HARNESS_INFERENCE_MODEL", "dummy")
+
+    seen = {}
+
+    class _Resp:
+        def read(self):
+            payload = {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "competitors": [
+                                        {
+                                            "name": "Shopify",
+                                            "urls": {
+                                                "site": "https://www.shopify.com/"
+                                            },
+                                        }
+                                    ]
+                                }
+                            )
+                        }
+                    }
+                ]
+            }
+            return json.dumps(payload).encode("utf-8")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def fake_urlopen(req, timeout=None):
+        seen["body"] = json.loads(req.data.decode("utf-8"))
+        seen["url"] = req.full_url
+        return _Resp()
+
+    def boom(*_a, **_k):
+        raise AssertionError("watchlist LLM must not call get_llm")
+
+    monkeypatch.setattr(intent_llm.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr("competitor_pulse.llm.get_llm", boom)
+
+    # Unknown company + no alias → LLM path
+    result = intake_parse.parse_watchlist_from_message(
+        "please watch Shopify and keep me posted"
+    )
+    assert [c["name"] for c in result["competitors"]] == ["Shopify"]
+    assert result["source"] == "llm"
+    assert seen["body"]["stream"] is False
+    assert seen["url"].endswith("/chat/completions")
+
+
+def test_intake_merge_fedex_plus_tesla_too(monkeypatch):
+    """Existing FedEx + 'add Tesla too' merges; no garbage name, no FedEx-only replace."""
+    _offline(monkeypatch)
+    monkeypatch.setenv("COMPETITOR_PULSE_LLM_PARSE", "0")
+    fedex = [{"name": "FedEx", "urls": {"site": "https://www.fedex.com/"}}]
+    result = intake(
+        {
+            "messages": [HumanMessage(content="Lets add a track for Tesla too")],
+            "internal": {"competitors": fedex},
+        }
+    )
+    names = [item["name"] for item in watchlist_from_state(result)]
+    assert "Tesla" in names
+    assert "FedEx" in names
+    assert "A Track For Tesla Too" not in names
+    assert result["status"] == "ok"
+
+
+def test_parse_track_message_simple_fedex_still_works():
+    from competitor_pulse.chat import parse_track_message
+
+    out = parse_track_message("track fedex")
+    assert out is not None
+    assert out[0]["name"] == "Fedex" or out[0]["name"].lower() == "fedex"
