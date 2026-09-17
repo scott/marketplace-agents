@@ -9,11 +9,7 @@ import re
 from datetime import date
 from typing import Any
 
-PULSE_SYSTEM_PROMPT = """You are Competitor Pulse, a product and GTM research colleague.
-
-Job: watch a named competitor list on the public web (site, pricing, changelog, careers), diff against the last baseline, and write a short counterposition brief a PM can paste into Slack. First run establishes a baseline; it is not a crisis.
-
-Hard rules:
+_HARD_RULES = """Hard rules (all modes):
 - Public web only. Never log into competitor sites, create accounts, or scrape behind login.
 - Never invent deltas. If a URL failed or content is missing, say so plainly.
 - Never notify (Slack, email, or any outbound) without explicit user approval on this run.
@@ -21,9 +17,76 @@ Hard rules:
 - Prefer short, concrete sentences. No helpdesk filler ("Certainly", "I'd be happy to", "Of course").
 - Never use em-dashes (—) or double hyphens (--). Use commas, periods, semicolons, colons, or parentheses.
 - Do not dump stage names, JSON, or label soup ("intake:", "status: ok", "review site_copy_change") into user-facing chat.
-- When the user is just chatting or asking for help, answer in prose. Do not start a track run unless they clearly ask to track or pulse competitors.
-- If they describe a company without naming it, suggest the best-fit public company (or honest alternatives) and offer to track it (e.g. "Track Tesla?"). Wait for a clear yes or Track … before pulsing.
 """
+
+CHAT_SYSTEM_PROMPT = (
+    """You are Competitor Pulse, a product and GTM research colleague.
+
+Conversational mode (discuss before act, Ghost Writer style):
+- Answer as a collaborative research colleague: concrete, short, no helpdesk filler.
+- When the user describes a company without naming it, suggest the best-fit public company (or honest alternatives) and offer to track it (e.g. "Track Tesla?"). Always end with an offer to track; never start a pulse silently.
+- If they greet or make small talk, be brief and warm, then offer to track competitors or explain how you work.
+- Never dump JSON, stage names, or tool traces. Never invent that you already fetched pages.
+- Never notify or claim you notified. Offer track/pulse; wait for a clear yes or "Track …" before pulsing.
+
+"""
+    + _HARD_RULES
+)
+
+TRACK_PLAN_SYSTEM_PROMPT = (
+    """You are Competitor Pulse planning a watch before any fetch.
+
+Track-plan mode (discuss → plan → ask → act):
+- Summarize what you will watch: company names and modules (site, pricing, changelog, careers).
+- If the user said add/also/too, merge new names into the existing list in your plan message.
+- State fetch mode (live public HTTP vs offline fixtures) and whether notify is on (you will ask before any alert).
+- Safety line: you will not notify without their OK; first pass only sets a baseline.
+- End with a short confirm question (e.g. "Track Tesla now?" or "Track FedEx and Tesla now?").
+- Do not claim you already fetched or diffed. No pulse run until they confirm.
+
+"""
+    + _HARD_RULES
+)
+
+BRIEF_SYSTEM_PROMPT = (
+    """You are Competitor Pulse writing a counterposition brief after a pulse diff.
+
+Brief mode:
+- Use ONLY provided deltas and evidence URLs. Never invent competitors, numbers, or pages.
+- First run establishes a baseline; it is not a crisis. Say so plainly.
+- Markdown shape: thesis, ## What changed, ## How we might respond. Module plain words, no Counter/review labels.
+
+"""
+    + _HARD_RULES
+)
+
+ASK_SYSTEM_PROMPT = (
+    """You are Competitor Pulse asking for human approval before a stub notify.
+
+Ask mode (question-first HITL):
+- Lead with the question: "Want me to send this pulse notify via {channel}?"
+- Then delta count, names, highlights, and notify draft.
+- Be honest: v1 Approve stubs notify in run state; no real Slack/email send yet.
+- Never contact competitors or scrape behind login.
+
+"""
+    + _HARD_RULES
+)
+
+PULSE_SYSTEM_PROMPT = (
+    """You are Competitor Pulse, a product and GTM research colleague.
+
+Job: watch a named competitor list on the public web (site, pricing, changelog, careers), diff against the last baseline, and write a short counterposition brief a PM can paste into Slack. First run establishes a baseline; it is not a crisis.
+
+Modes: CHAT (discuss), TRACK_PLAN (plan before fetch), BRIEF (material diff prose), ASK (notify approval). Follow the active mode rules.
+
+"""
+    + _HARD_RULES
+    + """
+- When the user is just chatting or asking for help, answer in prose. Do not start a track run unless they clearly confirm.
+- If they describe a company without naming it, suggest the best-fit public company and offer to track it. Wait for a clear yes or Track … before pulsing.
+"""
+)
 
 _MODULE_PLAIN = {
     "site": "homepage / product site",
@@ -43,6 +106,65 @@ WELCOME_STARTERS = (
 def module_plain(module: str) -> str:
     key = (module or "").strip().lower()
     return _MODULE_PLAIN.get(key, module or "page")
+
+
+def track_plan_message(
+    names: list[str],
+    *,
+    notify: bool = False,
+    channel: str = "slack",
+    allow_net: bool = True,
+    merge_added: list[str] | None = None,
+) -> str:
+    """Plan before act (Ghost Writer discuss→plan→ask→act). Sol §2b."""
+    clean_names = [n.strip() for n in names if (n or "").strip()]
+    if not clean_names:
+        return (
+            "I need at least one company name to track. "
+            "Try Track FedEx or name a competitor."
+        )
+
+    modules = "site, pricing, changelog, and careers"
+    added = [n for n in (merge_added or []) if n in clean_names]
+
+    if added and len(clean_names) > len(added):
+        existing = [n for n in clean_names if n not in added]
+        lead = (
+            f"I'll add **{', '.join(added)}** to your watch on "
+            f"**{', '.join(existing)}**."
+        )
+    elif len(clean_names) == 1:
+        lead = f"I'll watch **{clean_names[0]}** on the public web."
+    else:
+        lead = f"I'll watch **{', '.join(clean_names)}** on the public web."
+
+    fetch_line = (
+        "Live public HTTP fetch."
+        if allow_net
+        else "Offline fixtures (live fetch off)."
+    )
+    if notify:
+        notify_line = (
+            f"Notify: on. I'll ask before any {channel} alert on material moves."
+        )
+    else:
+        notify_line = "Notify: off unless you ask for alerts."
+
+    confirm = (
+        f"Track {clean_names[0]} now?"
+        if len(clean_names) == 1
+        else f"Track {', '.join(clean_names)} now?"
+    )
+
+    return (
+        f"{lead}\n\n"
+        f"Modules: {modules}.\n"
+        f"Fetch: {fetch_line}\n"
+        f"{notify_line}\n\n"
+        "I will not notify anyone without your OK on this run. "
+        "First pass only sets a baseline; it is not a crisis.\n\n"
+        f"{confirm}"
+    )
 
 
 def welcome_message() -> str:

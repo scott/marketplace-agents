@@ -35,7 +35,7 @@ def test_parse_pulse_on_cursor_and_perplexity():
     assert parsed["is_tracking_request"] is True
 
 
-def test_intake_nl_watchlist_sets_allow_net(monkeypatch):
+def test_intake_nl_watchlist_plan_not_immediate_pulse(monkeypatch):
     _offline(monkeypatch)
     result = intake(
         {
@@ -46,13 +46,13 @@ def test_intake_nl_watchlist_sets_allow_net(monkeypatch):
             ]
         }
     )
-    names = {item["name"] for item in watchlist_from_state(result)}
-    assert "OpenAI" in names
-    assert "Anthropic" in names
-    assert "Google AI" in names
-    assert result["allow_net"] is True
-    assert result["notify"] is False
-    assert result["status"] == "ok"
+    assert result.get("intent") == "track_plan"
+    assert result.get("status") == "track_plan"
+    assert watchlist_from_state(result) == []
+    text = result["messages"][0].content.lower()
+    assert "openai" in text
+    assert "anthropic" in text
+    assert "track" in text
 
 
 def test_intake_json_still_works(monkeypatch):
@@ -108,7 +108,7 @@ def test_intake_unresolved_track_request_blocked(monkeypatch):
     }
 
 
-def test_intake_notify_from_nl(monkeypatch):
+def test_intake_notify_from_nl_in_plan(monkeypatch):
     _offline(monkeypatch)
     result = intake(
         {
@@ -117,8 +117,12 @@ def test_intake_notify_from_nl(monkeypatch):
             ]
         }
     )
-    assert result["notify"] is True
-    assert any(item["name"] == "Cursor" for item in watchlist_from_state(result))
+    assert result.get("intent") == "track_plan"
+    text = result["messages"][0].content.lower()
+    assert "cursor" in text
+    assert "slack" in text or "notify" in text
+    pending = result.get("pending_track") or {}
+    assert pending.get("notify") is True
 
 
 def test_parse_hi_never_calls_llm_watchlist(monkeypatch):
@@ -248,8 +252,8 @@ def test_llm_watchlist_uses_chat_completions_stream_false(monkeypatch):
     assert seen["url"].endswith("/chat/completions")
 
 
-def test_intake_merge_fedex_plus_tesla_too(monkeypatch):
-    """Existing FedEx + 'add Tesla too' merges; no garbage name, no FedEx-only replace."""
+def test_intake_merge_fedex_plus_tesla_too_plan(monkeypatch):
+    """Existing FedEx + 'add Tesla too' → plan with merged names; no immediate pulse."""
     _offline(monkeypatch)
     monkeypatch.setenv("COMPETITOR_PULSE_LLM_PARSE", "0")
     fedex = [{"name": "FedEx", "urls": {"site": "https://www.fedex.com/"}}]
@@ -259,11 +263,16 @@ def test_intake_merge_fedex_plus_tesla_too(monkeypatch):
             "internal": {"competitors": fedex},
         }
     )
-    names = [item["name"] for item in watchlist_from_state(result)]
-    assert "Tesla" in names
-    assert "FedEx" in names
-    assert "A Track For Tesla Too" not in names
-    assert result["status"] == "ok"
+    assert result.get("intent") == "track_plan"
+    assert result.get("status") == "track_plan"
+    text = result["messages"][0].content
+    assert "Tesla" in text
+    assert "FedEx" in text
+    assert "A Track For Tesla Too" not in text
+    pending = result.get("pending_track") or {}
+    pending_names = [item["name"] for item in pending.get("competitors") or []]
+    assert "Tesla" in pending_names
+    assert "FedEx" in pending_names
 
 
 def test_parse_track_message_simple_fedex_still_works():

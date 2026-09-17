@@ -58,8 +58,8 @@ def test_doctl_text_hi_rejects_legacy_empty_list_input(monkeypatch):
     assert _greeting_count(text) == 1
 
 
-def test_doctl_text_track_fedex_first_run_clean(monkeypatch, tmp_path):
-    """NL track path: no JSON leaks; ack once (offline FedEx has no fixtures → quiet OK)."""
+def test_doctl_text_track_fedex_plan_clean(monkeypatch, tmp_path):
+    """NL track path: plan first (no Got it ack); no JSON leaks."""
     _offline(monkeypatch)
     empty_bl = tmp_path / "empty.json"
     empty_bl.write_text(json.dumps({"version": 1, "entries": []}), encoding="utf-8")
@@ -72,7 +72,8 @@ def test_doctl_text_track_fedex_first_run_clean(monkeypatch, tmp_path):
     raw = assemble_doctl_prompt_text(g, payload)
     assert not contains_watchlist_json(raw)
     assert '{"competitors"' not in raw
-    assert raw.count("Got it") == 1
+    assert "Got it" not in raw
+    assert "Track FedEx now?" in raw
     text = strip_doctl_artifacts(raw)
     assert text.lower().count("fedex") >= 1
 
@@ -190,8 +191,9 @@ def test_track_stream_updates_omit_competitors_and_chat_ack(monkeypatch, tmp_pat
             u = update or {}
             assert "competitors" not in u
             assert "watchlist" not in u
-            assert "internal" not in u
             assert "chat_ack" not in u
+            if u.get("pending_track"):
+                assert "competitors" in u["pending_track"]
 
 
 def test_input_schema_excludes_watchlist(monkeypatch):
@@ -202,6 +204,7 @@ def test_input_schema_excludes_watchlist(monkeypatch):
     assert "watchlist" not in props
     assert "competitors" not in props
     assert "internal" not in props
+    assert "pending_track" in props
     assert "messages" in props
 
 
@@ -215,6 +218,7 @@ def test_output_schema_messages_only_for_chat_text(monkeypatch):
     assert "watchlist" not in props
     assert "competitors" not in props
     assert "internal" not in props
+    assert "pending_track" not in props
 
 
 def test_schemas_printable_proof_no_watchlist(monkeypatch, capsys):

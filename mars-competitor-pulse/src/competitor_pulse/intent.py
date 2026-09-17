@@ -16,10 +16,27 @@ _CHAT_RE = re.compile(
     r"good\s+(?:morning|afternoon|evening)|"
     r"what'?s\s+up|whats\s+up|"
     r"what'?s\s+good|whats\s+good|"
-    r"run|go|start|ok|okay|yes|yep|sure|"
+    r"run|go|start|"
     r"please|thanks|thank\s+you|thx|cheers|nice|cool|"
     r"lol|haha|ha|"
     r"bye|goodbye|see\s+ya|later"
+    r")\s*[!.?]*$",
+    re.IGNORECASE,
+)
+
+# Bare yes/ok only when no pending track plan (confirm handled separately).
+_STANDALONE_CHAT_ACK_RE = re.compile(
+    r"^(?:yes|yep|yeah|yup|sure|ok|okay)\s*[!.?]*$",
+    re.IGNORECASE,
+)
+
+_TRACK_CONFIRM_RE = re.compile(
+    r"^(?:"
+    r"yes|yep|yeah|yup|sure|ok|okay|"
+    r"go ahead|go for it|do it|proceed|"
+    r"track it|track them|start|run it|"
+    r"sounds good|let'?s go|lets go|"
+    r"confirmed|confirm"
     r")\s*[!.?]*$",
     re.IGNORECASE,
 )
@@ -61,7 +78,17 @@ def is_chat_message(text: str) -> bool:
         return False
     if is_generic_message(stripped):
         return True
+    if _STANDALONE_CHAT_ACK_RE.match(stripped):
+        return True
     return bool(_CHAT_RE.match(stripped))
+
+
+def is_track_confirm(text: str) -> bool:
+    """True when the operator confirms a pending track plan."""
+    stripped = (text or "").strip()
+    if not stripped:
+        return False
+    return bool(_TRACK_CONFIRM_RE.match(stripped))
 
 
 def is_help_message(text: str) -> bool:
@@ -91,27 +118,28 @@ def classify_intent(
     overlay_watchlist: list[dict[str, Any]] | None = None,
     overlay_preset: str | None = None,
     parsed_nl: dict[str, Any] | None = None,
+    pending_track: dict[str, Any] | None = None,
 ) -> str:
-    """Classify latest human message into chat | help | pulse | other.
+    """Classify latest human message into chat | help | track_plan | pulse | other.
 
-    ``pulse`` keeps the existing watchlist → gather → analyze workflow.
-    Programmatic invokes with no human text still route to ``pulse``.
+    ``track_plan`` = NL extracted companies; reply with plan + confirm (no gather).
+    ``pulse`` = confirmed track or programmatic invoke → gather → analyze workflow.
 
     Order:
     1. Empty human + no overlay pulse signals → pulse (programmatic)
     2. Overlay watchlist / spacexai preset → pulse
-    3. Parsed competitors/watchlist → pulse
-    4. Clear help regex → help (before bare ``watch`` tracking — e.g. modules help)
-    5. Non-generic tracking request → pulse
-    6. Clear chat regex / is_generic_message → chat
-    7. Else if API key: direct-HTTP LLM classify (stream:false)
-    8. Else → other
+    3. Pending track + confirm phrase → pulse
+    4. Parsed competitors from NL → track_plan (Ghost Writer plan-before-act)
+    5. Clear help regex → help
+    6. Non-generic tracking request (unresolved) → track_plan (intake may block)
+    7. Clear chat regex / is_generic_message → chat
+    8. Else if API key: direct-HTTP LLM classify (stream:false)
+    9. Else → other
 
     Never short-circuit to pulse solely because ``state_watchlist`` is already
     set — greetings/help after a track must still route chat/help.
-    ``state_watchlist`` is accepted for API compatibility but ignored for routing.
     """
-    _ = state_watchlist  # intentionally unused for routing (see docstring)
+    _ = state_watchlist  # API compat; routing uses pending_track + parsed NL
 
     stripped = (human_text or "").strip()
     overlay_pulse = _has_overlay_pulse(
@@ -130,32 +158,39 @@ def classify_intent(
 
     parsed = parsed_nl if parsed_nl is not None else parse_watchlist_from_message(stripped)
 
-    # 3. Resolved competitors from NL → pulse
-    if parsed.get("competitors") or parsed.get("watchlist"):
+    # 3. Confirm pending track plan → pulse
+    if pending_track and stripped and is_track_confirm(stripped):
         return "pulse"
 
-    # 4. Clear help (before tracking keyword "watch" in help questions)
+    # 4. Resolved competitors from NL → track_plan (discuss → plan → ask)
+    if parsed.get("competitors") or parsed.get("watchlist"):
+        return "track_plan"
+
+    # 5. Clear help (before tracking keyword "watch" in help questions)
     if stripped and is_help_message(stripped):
         return "help"
 
-    # 5. Tracking request without being generic chat
+    # 6. Tracking request without being generic chat
     if parsed.get("is_tracking_request") and not parsed.get("is_generic"):
-        return "pulse"
+        return "track_plan"
 
-    # 6. Clear chat / generic openers
+    # 7. Clear chat / generic openers
     if stripped and is_chat_message(stripped):
         return "chat"
 
-    # 7. LLM classify (direct HTTP) when key present
+    # 8. LLM classify (direct HTTP) when key present
     if stripped:
         try:
             from competitor_pulse.intent_llm import classify_intent_llm
 
             llm_intent = classify_intent_llm(stripped)
-            if llm_intent in {"chat", "help", "pulse", "other"}:
+            if llm_intent == "pulse":
+                # Ambiguous LLM pulse without resolved names stays conversational.
+                return "other"
+            if llm_intent in {"chat", "help", "other"}:
                 return llm_intent
         except Exception:
             pass
 
-    # 8. Offline / failure fallback
+    # 9. Offline / failure fallback
     return "other"
