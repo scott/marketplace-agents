@@ -51,18 +51,23 @@ def material_baseline_path() -> Path:
     return default_fixture_dir() / "baselines" / "material.json"
 
 
-def default_watchlist() -> list[dict[str, Any]]:
-    path = default_fixture_dir() / "watchlist.json"
+def default_competitors() -> list[dict[str, Any]]:
+    path = default_fixture_dir() / "competitors.json"
     if path.is_file():
         return json.loads(path.read_text(encoding="utf-8"))
     return []
 
 
-def spacexai_watchlist() -> list[dict[str, Any]]:
-    path = default_fixture_dir() / "watchlist_spacexai.json"
+def spacexai_competitors() -> list[dict[str, Any]]:
+    path = default_fixture_dir() / "competitors_spacexai.json"
     if path.is_file():
         return json.loads(path.read_text(encoding="utf-8"))
     return []
+
+
+# Back-compat aliases (legacy names; not state/schema keys).
+default_watchlist = default_competitors
+spacexai_watchlist = spacexai_competitors
 
 
 def content_hash(text: str) -> str:
@@ -295,9 +300,9 @@ def allow_network() -> bool:
     return val in {"1", "true", "yes", "on"}
 
 
-def modules_from_watchlist(watchlist: list[dict[str, Any]]) -> list[str]:
+def modules_from_competitors(competitors: list[dict[str, Any]]) -> list[str]:
     found: list[str] = []
-    for item in watchlist:
+    for item in competitors:
         urls = item.get("urls") or {}
         for m in _MODULE_KEYS:
             if urls.get(m) and m not in found:
@@ -305,3 +310,6 @@ def modules_from_watchlist(watchlist: list[dict[str, Any]]) -> list[str]:
     if not found:
         found = ["site"]
     return found
+
+
+modules_from_watchlist = modules_from_competitors

@@ -51,7 +51,7 @@ Start a chat and name the companies you want to track in plain English — no JS
 
 Competitor Pulse has a sharp, dry GTM-researcher personality in MARS chat — helpful, not corporate. Greetings and how-to questions get a single warm reply; pulse work stays factual.
 
-The graph speaks through a single `AIMessage`: chat/help paths end at `converse`; pulse paths finish at `report`. Competitor lists live under `internal.competitors` (not in input/output schemas) — the field was renamed from `watchlist` because doctl flattens schema property names into prompt `text` (production still echoed `{"watchlist":[]}` after top-level removal). JSON intake accepts both `watchlist` and `competitors` keys for backward compat. `converse` returns **only** `{"messages": [AIMessage(...)]}` so stream metadata is not concatenated with the final reply. **Remaining duplication risk:** if the platform still concat stream `AIMessage` + final output `messages`, greetings may appear twice until MARS/doctl dedupes — tests use `strip_doctl_artifacts()` to model observed prod. Never raw JSON or HTML source in chat bubbles.
+The graph speaks through a single `AIMessage`. Chat/help/other: `intake` emits that message and routes to **END** (diag-shaped one-node path — mars-pulse-diag proved MARS does **not** inject `{"watchlist":[]}`; Pulse still did while using a multi-node chat path + `fixtures/watchlist.json`). Pulse paths finish at `report`. Competitor lists live under `internal.competitors` (not in input/output schemas). Fixture files are `fixtures/competitors.json` (legacy filename `watchlist.json` removed). JSON intake still accepts a legacy `"watchlist"` **string key inside chat JSON** on parse only. Never raw JSON or HTML source in chat bubbles.
 
 | Situation | What you see |
 |-----------|----------------|
@@ -75,7 +75,7 @@ The graph speaks through a single `AIMessage`: chat/help paths end at `converse`
 ## Run flow
 
 ```
-intake → (chat/help → converse → END | pulse → execute_pulse → **ask** → act → report | blocked → report)
+intake → (chat/help/other → END | pulse → execute_pulse → **ask** → act → report | blocked → report)
 ```
 
 `execute_pulse` runs plan → gather → analyze → draft internally.
@@ -159,7 +159,7 @@ Fallbacks `OPENAI_BASE_URL` / `OPENAI_API_KEY` / `OPENAI_MODEL` are OK if docume
 
 **Permissions / tools**
 
-- v1 offline path uses `fixtures/watchlist.json`, `fixtures/snapshots/`, and `fixtures/baselines/*.json`
+- v1 offline path uses `fixtures/competitors.json`, `fixtures/snapshots/`, and `fixtures/baselines/*.json`
 - Public HTTP fetch only when `ALLOW_NET=1`; tests/smoke set `ALLOW_NET=0`
 - `notify` defaults **off** — records intent in state only; no Action Gateway / Slack required for local proof
 

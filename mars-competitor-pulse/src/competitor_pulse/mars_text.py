@@ -48,23 +48,25 @@ def assemble_doctl_prompt_text(
 ) -> str:
     """Best-effort model of how ``doctl agent prompt -o json`` builds ``text``.
 
-    Observed production behavior concatenates:
+    Models a **single** run (stream updates + final output from that run's last
+    state), concatenating:
     1. Serialized input list fields when the exported input schema includes them
-       (often ``[]`` from schema defaults — fixed by omitting list fields from
-       ``input_schema`` and nesting under ``internal.competitors``)
     2. Each node update's ``watchlist`` / ``competitors`` / ``internal.*`` when present
-    3. Prose string fields from stream updates (``converse_reply``, ``chat_ack``,
-       ``human_summary``)
+    3. Prose string fields from stream updates
     4. Each streamed ``AIMessage`` content
-    5. Final output ``messages`` (may duplicate step 4 — converse returns only
-       ``messages`` to mitigate)
+    5. Final output ``messages`` not already appended (same content deduped)
+
+    Chat path is intake→END with one AIMessage (diag-shaped) so step 4+5 should
+    not double after content dedupe.
     """
     text = ""
+    seen_ai: set[str] = set()
     input_props = (graph.get_input_jsonschema().get("properties") or {})
     for key in ("watchlist", "competitors"):
         if key in input_props and key in payload:
             text += json.dumps({key: payload[key]}, separators=(",", ":"))
 
+    final_state: dict[str, Any] | None = None
     for chunk in graph.stream(payload, stream_mode="updates"):
         for _node, update in chunk.items():
             u = update or {}
@@ -86,13 +88,17 @@ def assemble_doctl_prompt_text(
             for msg in u.get("messages") or []:
                 if isinstance(msg, AIMessage):
                     content = msg.content if isinstance(msg.content, str) else str(msg.content)
-                    text += content
-
-    final = graph.invoke(payload)
-    for msg in final.get("messages") or []:
+                    if content not in seen_ai:
+                        text += content
+                        seen_ai.add(content)
+        # keep last values snapshot via separate invoke only if needed
+    final_state = graph.invoke(payload)
+    for msg in (final_state or {}).get("messages") or []:
         if isinstance(msg, AIMessage):
             content = msg.content if isinstance(msg.content, str) else str(msg.content)
-            text += content
+            if content not in seen_ai:
+                text += content
+                seen_ai.add(content)
     return text
 
 

@@ -9,7 +9,6 @@ from langgraph.graph import END, START, StateGraph
 from competitor_pulse.nodes import (
     act,
     ask,
-    converse,
     execute_pulse,
     intake_node,
     report,
@@ -22,14 +21,12 @@ from competitor_pulse.state import InputState, OutputState, PulseState
 def build_graph() -> StateGraph:
     """Construct the uncompiled StateGraph.
 
-    ``intake_node`` classifies intent and routes; ``execute_pulse`` runs
-    plan→draft without streaming raw competitor-list JSON. Only ``report``
-    appends chat ``messages`` on pulse paths.
+    Chat/help/other: ``intake`` emits a single ``AIMessage`` and routes to END
+    (diag-shaped one-node reply — avoids stream+converse duplication on MARS).
 
-    ``competitors`` lives under ``internal`` (not in input/output schemas) so
-    doctl never seeds ``{"watchlist":[]}`` or ``{"competitors":[]}``. Chat/help
-    ``converse`` returns only ``messages`` and ends at END — pulse paths still
-    finish at ``report``.
+    Pulse: ``intake`` → ``execute_pulse`` → optional ask/act → ``report`` → END.
+    Competitor lists live under ``internal.competitors`` (not in input/output
+    schemas). Fixture files are ``competitors*.json`` (no ``watchlist`` names).
     """
     builder: StateGraph = StateGraph(
         PulseState,
@@ -37,7 +34,6 @@ def build_graph() -> StateGraph:
         output_schema=OutputState,
     )
     builder.add_node("intake", intake_node)
-    builder.add_node("converse", converse)
     builder.add_node("execute_pulse", execute_pulse)
     builder.add_node("ask", ask)
     builder.add_node("act", act)
@@ -47,9 +43,8 @@ def build_graph() -> StateGraph:
     builder.add_conditional_edges(
         "intake",
         route_after_intake,
-        {"converse": "converse", "execute_pulse": "execute_pulse", "report": "report"},
+        {"end": END, "execute_pulse": "execute_pulse", "report": "report"},
     )
-    builder.add_edge("converse", END)
     builder.add_conditional_edges(
         "execute_pulse",
         should_ask,

@@ -6,7 +6,7 @@
   "graphs": {
     "agent": {
       "path": "./src/competitor_pulse/graph.py:graph",
-      "description": "Competitor Pulse — watchlist diff, baseline brief, ask before notify"
+      "description": "Competitor Pulse \u2014 competitor page diff, baseline brief, ask before notify"
     }
   }
 }

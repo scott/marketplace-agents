@@ -386,17 +386,17 @@ def intake(state: PulseState) -> dict[str, Any]:
     )
 
     if intent in {"chat", "help", "other"}:
+        # Single-node chat path (diag-shaped): emit AIMessage here and route to END.
+        # No empty list fields (deltas/artifacts) — those JSON-serialize into doctl text.
+        # No second converse node (prod doubled greetings via stream+final).
+        reply = conversational_reply(intent, human_text or "")
         return {
             "intent": intent,
             "status": intent,
-            "notify": False,
-            "stage_summaries": _append_summary(
-                state, f"intake: {intent} — conversational"
-            ),
-            "deltas": [],
             "material": False,
             "skipped": False,
             "notified": False,
+            **_assistant_reply(reply, None),
         }
 
     resolved = _resolve_competitors(state, overlay, nl_text)
@@ -815,10 +815,13 @@ def draft(state: PulseState) -> dict[str, Any]:
 
 
 def route_after_intake(state: PulseState) -> str:
-    """Conversational intents skip gather; pulse continues to execute_pulse."""
+    """Chat/help/other already emitted AIMessage in intake — end (diag-shaped).
+
+    Pulse continues to execute_pulse; blocked goes to report.
+    """
     intent = (state.get("intent") or "pulse").strip().lower()
     if intent in {"chat", "help", "other"}:
-        return "converse"
+        return "end"
     if state.get("status") == "blocked":
         return "report"
     return "execute_pulse"

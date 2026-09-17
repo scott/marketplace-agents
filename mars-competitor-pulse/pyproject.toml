@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "competitor-pulse"
 version = "0.1.0"
-description = "Competitor Pulse — LangGraph agent for watchlist diff + notify ask"
+description = "Competitor Pulse — LangGraph agent for competitor page diff + notify ask"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }

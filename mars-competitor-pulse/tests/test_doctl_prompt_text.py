@@ -80,8 +80,23 @@ def test_doctl_text_hi_stream_updates_never_emit_human_summary(monkeypatch):
             assert "competitors" not in u
             assert "internal" not in u
             assert "converse_reply" not in u
-            if node == "converse":
-                assert set(u.keys()) <= {"messages"}
+            if node == "intake" and "messages" in u:
+                # Chat path: intake emits AIMessage and ends (no converse node).
+                assert "intent" in u
+                assert "messages" in u
+                # Scalars OK; never empty list fields or competitor payloads.
+                assert "deltas" not in u
+                assert "watchlist" not in u
+                assert "competitors" not in u
+                assert "internal" not in u
+                assert set(u.keys()) <= {
+                    "messages",
+                    "intent",
+                    "status",
+                    "material",
+                    "skipped",
+                    "notified",
+                }
 
 
 def test_input_schema_excludes_watchlist(monkeypatch):

@@ -285,7 +285,7 @@ def _llm_watchlist(text: str) -> list[dict[str, Any]] | None:
         prompt = (
             "Extract companies to track from the user message. "
             "Return ONLY valid JSON: "
-            '{"watchlist":[{"name":"Company","urls":{"site":"https://...","pricing":"https://...","changelog":"https://..."}}]}. '
+            '{"competitors":[{"name":"Company","urls":{"site":"https://...","pricing":"https://...","changelog":"https://..."}}]}. '
             "Include best-effort public HTTPS URLs when obvious. "
             f"User message:\n{text}"
         )
