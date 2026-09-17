@@ -52,7 +52,7 @@ def test_intake_nl_watchlist_plan_not_immediate_pulse(monkeypatch):
     text = result["messages"][0].content.lower()
     assert "openai" in text
     assert "anthropic" in text
-    assert "track" in text
+    assert "watch plan" in text or "start this watch" in text
 
 
 def test_intake_json_still_works(monkeypatch):
@@ -266,9 +266,7 @@ def test_intake_merge_fedex_plus_tesla_too_plan(monkeypatch):
     assert result.get("intent") == "track_plan"
     assert result.get("status") == "track_plan"
     text = result["messages"][0].content
-    assert "Tesla" in text
-    assert "FedEx" in text
-    assert "A Track For Tesla Too" not in text
+    assert "Add to the current watch?" in text
     pending = result.get("pending_track") or {}
     pending_names = [item["name"] for item in pending.get("competitors") or []]
     assert "Tesla" in pending_names

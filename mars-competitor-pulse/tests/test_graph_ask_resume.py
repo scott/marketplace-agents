@@ -36,7 +36,7 @@ def test_ask_payload_contract(monkeypatch):
     _g, _cfg, result = _run_to_interrupt(monkeypatch, "ask-contract")
     assert "__interrupt__" in result
     payload = result["__interrupt__"][0].value
-    assert payload.get("title") == "Want me to send this pulse notify via slack?"
+    assert payload.get("title") == "Notify about competitor changes?"
     assert payload.get("pending_action") == "notify"
     assert payload.get("choices") == ["approve", "deny"]
     body = payload.get("body") or ""

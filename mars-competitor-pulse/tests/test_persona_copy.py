@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from competitor_pulse.persona import (
+    NOTIFY_ASK_TITLE,
     PULSE_SYSTEM_PROMPT,
     ask_body,
     brief_prose,
     help_message,
     quiet_message,
+    track_plan_message,
     welcome_message,
 )
 
@@ -47,6 +49,9 @@ def test_ask_body_question_first_and_stub_honesty():
         notify_draft="Pulse: 2 material change(s) on Acme, Globex.",
     )
     assert body.startswith("Want me to send this pulse notify via slack?")
+    first_line = body.split("\n", 1)[0]
+    assert first_line.endswith("?")
+    assert "slack" in first_line.lower()
     assert "I will not:" in body
     assert "stub" in body.lower()
     assert "pending_action" not in body
@@ -85,3 +90,22 @@ def test_conversational_reply_ignores_harness_llm(monkeypatch):
     from competitor_pulse.persona import welcome_message
 
     assert conversational_reply("chat", "hi") == welcome_message()
+
+
+def test_notify_ask_title_sol():
+    assert NOTIFY_ASK_TITLE == "Notify about competitor changes?"
+
+
+def test_track_plan_prose_not_json():
+    plan = track_plan_message(["OpenAI", "Anthropic"], notify=False)
+    assert "Here's the watch plan:" in plan
+    assert "Companies: OpenAI, Anthropic" in plan
+    assert "{" not in plan
+    assert "Want me to start this watch and run a pulse?" in plan
+
+
+def test_voice_track_confirm_question():
+    plan = track_plan_message(["Tesla"], notify=False)
+    lines = [ln.strip() for ln in plan.splitlines() if ln.strip()]
+    assert lines[-1].endswith("?")
+    assert "watch" in lines[-1].lower() or "pulse" in lines[-1].lower()

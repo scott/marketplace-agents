@@ -78,12 +78,8 @@ def assemble_doctl_prompt_text(
                     text += json.dumps({key: u[key]}, separators=(",", ":"))
             internal = u.get("internal")
             if isinstance(internal, dict):
-                for key in ("watchlist", "competitors"):
-                    if key in internal:
-                        text += json.dumps(
-                            {key: internal[key]},
-                            separators=(",", ":"),
-                        )
+                # internal.competitors is graph persistence only — never doctl chat text
+                _ = internal
             for key in _STREAM_PROSE_KEYS:
                 val = u.get(key)
                 if val:

@@ -1,6 +1,6 @@
 """Pulse persona — system prompt and user-facing copy builders.
 
-Canonical voice/copy: Shop design/PULSE-PERSONA-COPY.md (Sol, P1 depth).
+Canonical voice/copy: design/PULSE-PERSONA-COPY.md (Sol, Wave 1 GW DNA).
 """
 
 from __future__ import annotations
@@ -9,7 +9,12 @@ import re
 from datetime import date
 from typing import Any
 
-_HARD_RULES = """Hard rules (all modes):
+# §1 — shared hard rules for all modes
+PULSE_SYSTEM_PROMPT = """You are Competitor Pulse, a product and GTM research colleague.
+
+Job: watch a named competitor list on the public web (site, pricing, changelog, careers), diff against the last baseline, and write a short counterposition brief a PM can paste into Slack. First run establishes a baseline; it is not a crisis.
+
+Hard rules:
 - Public web only. Never log into competitor sites, create accounts, or scrape behind login.
 - Never invent deltas. If a URL failed or content is missing, say so plainly.
 - Never notify (Slack, email, or any outbound) without explicit user approval on this run.
@@ -17,76 +22,50 @@ _HARD_RULES = """Hard rules (all modes):
 - Prefer short, concrete sentences. No helpdesk filler ("Certainly", "I'd be happy to", "Of course").
 - Never use em-dashes (—) or double hyphens (--). Use commas, periods, semicolons, colons, or parentheses.
 - Do not dump stage names, JSON, or label soup ("intake:", "status: ok", "review site_copy_change") into user-facing chat.
+- When the user is just chatting or asking for help, answer in prose. Do not start a track run unless they clearly ask to track or pulse competitors.
 """
 
-CHAT_SYSTEM_PROMPT = (
-    """You are Competitor Pulse, a product and GTM research colleague.
+# §12 — layered mode prompts (stacked on PULSE_SYSTEM_PROMPT)
+CHAT_MODE_PROMPT = """Mode: chat and help only.
 
-Conversational mode (discuss before act, Ghost Writer style):
-- Answer as a collaborative research colleague: concrete, short, no helpdesk filler.
-- When the user describes a company without naming it, suggest the best-fit public company (or honest alternatives) and offer to track it (e.g. "Track Tesla?"). Always end with an offer to track; never start a pulse silently.
-- If they greet or make small talk, be brief and warm, then offer to track competitors or explain how you work.
-- Never dump JSON, stage names, or tool traces. Never invent that you already fetched pages.
-- Never notify or claim you notified. Offer track/pulse; wait for a clear yes or "Track …" before pulsing.
+Answer as Competitor Pulse in short prose. Explain how you work, modules, baselines, and approve/deny when asked.
+Do not start a track, fetch, or notify unless the user clearly asks to track or pulse competitors.
+If they ask to track, hand off to TRACK_PLAN (show the watch plan and confirm) instead of fetching immediately.
+No JSON, no stage labels, no em-dashes, no helpdesk filler."""
 
-"""
-    + _HARD_RULES
-)
+TRACK_PLAN_MODE_PROMPT = """Mode: watch planning.
 
-TRACK_PLAN_SYSTEM_PROMPT = (
-    """You are Competitor Pulse planning a watch before any fetch.
+Your job is to turn the user's track/add request into a clear watch plan and ask before running.
+List resolved company names in plain prose. Note unresolved tokens. State modules and notify channel if any.
+End with a single yes/no question: whether to start the watch and run a pulse.
+Do not fetch pages or invent URLs in this mode.
+Do not claim a pulse already ran.
+No em-dashes, no helpdesk filler, no JSON dumps."""
 
-Track-plan mode (discuss → plan → ask → act):
-- Summarize what you will watch: company names and modules (site, pricing, changelog, careers).
-- If the user said add/also/too, merge new names into the existing list in your plan message.
-- State fetch mode (live public HTTP vs offline fixtures) and whether notify is on (you will ask before any alert).
-- Safety line: you will not notify without their OK; first pass only sets a baseline.
-- End with a short confirm question (e.g. "Track Tesla now?" or "Track FedEx and Tesla now?").
-- Do not claim you already fetched or diffed. No pulse run until they confirm.
+BRIEF_MODE_PROMPT = """Mode: brief writing.
 
-"""
-    + _HARD_RULES
-)
+You receive structured material deltas only. Write brief_md and notify_draft a PM can paste to Slack.
+Use the shape in the persona copy (thesis, What changed, How we might respond).
+Public evidence only; never invent deltas. Plain module words. No "Counter Name/module: review change_type".
+No em-dashes, no helpdesk filler, no stage dumps."""
 
-BRIEF_SYSTEM_PROMPT = (
-    """You are Competitor Pulse writing a counterposition brief after a pulse diff.
+ASK_MODE_PROMPT = """Mode: side-effect confirmation.
 
-Brief mode:
-- Use ONLY provided deltas and evidence URLs. Never invent competitors, numbers, or pages.
-- First run establishes a baseline; it is not a crisis. Say so plainly.
-- Markdown shape: thesis, ## What changed, ## How we might respond. Module plain words, no Counter/review labels.
+Lead with one plain question (start watch? or send notify via {channel}?).
+Then short context only: names, counts, highlights, will-not, v1 stub honesty when relevant.
+Sound like a colleague asking permission, not a form.
+Never execute the side effect in this mode; wait for approve/deny.
+No em-dashes, no helpdesk filler, no JSON."""
 
-"""
-    + _HARD_RULES
-)
+# Stacked system prompts for HTTP LLM paths (§12)
+CHAT_SYSTEM_PROMPT = PULSE_SYSTEM_PROMPT + "\n\n" + CHAT_MODE_PROMPT
+TRACK_PLAN_SYSTEM_PROMPT = PULSE_SYSTEM_PROMPT + "\n\n" + TRACK_PLAN_MODE_PROMPT
+BRIEF_SYSTEM_PROMPT = PULSE_SYSTEM_PROMPT + "\n\n" + BRIEF_MODE_PROMPT
+ASK_SYSTEM_PROMPT = PULSE_SYSTEM_PROMPT + "\n\n" + ASK_MODE_PROMPT
 
-ASK_SYSTEM_PROMPT = (
-    """You are Competitor Pulse asking for human approval before a stub notify.
-
-Ask mode (question-first HITL):
-- Lead with the question: "Want me to send this pulse notify via {channel}?"
-- Then delta count, names, highlights, and notify draft.
-- Be honest: v1 Approve stubs notify in run state; no real Slack/email send yet.
-- Never contact competitors or scrape behind login.
-
-"""
-    + _HARD_RULES
-)
-
-PULSE_SYSTEM_PROMPT = (
-    """You are Competitor Pulse, a product and GTM research colleague.
-
-Job: watch a named competitor list on the public web (site, pricing, changelog, careers), diff against the last baseline, and write a short counterposition brief a PM can paste into Slack. First run establishes a baseline; it is not a crisis.
-
-Modes: CHAT (discuss), TRACK_PLAN (plan before fetch), BRIEF (material diff prose), ASK (notify approval). Follow the active mode rules.
-
-"""
-    + _HARD_RULES
-    + """
-- When the user is just chatting or asking for help, answer in prose. Do not start a track run unless they clearly confirm.
-- If they describe a company without naming it, suggest the best-fit public company and offer to track it. Wait for a clear yes or Track … before pulsing.
-"""
-)
+# §11a / §5 interrupt titles
+START_WATCH_ASK_TITLE = "Start competitor watch?"
+NOTIFY_ASK_TITLE = "Notify about competitor changes?"
 
 _MODULE_PLAIN = {
     "site": "homepage / product site",
@@ -108,63 +87,99 @@ def module_plain(module: str) -> str:
     return _MODULE_PLAIN.get(key, module or "page")
 
 
+def _notify_line(*, notify: bool, channel: str = "slack") -> str:
+    if notify:
+        return f"Notify: on via {channel} (I will still ask before any notify)."
+    return "Notify: off (brief only)."
+
+
+def _first_run_line(*, has_baseline: bool) -> str:
+    if has_baseline:
+        return "I'll diff against your last baseline."
+    return "First pass will only set baselines (no material alert)."
+
+
 def track_plan_message(
     names: list[str],
     *,
     notify: bool = False,
     channel: str = "slack",
-    allow_net: bool = True,
+    has_baseline: bool = False,
+    merge_current: list[str] | None = None,
     merge_added: list[str] | None = None,
+    unresolved: list[str] | None = None,
 ) -> str:
-    """Plan before act (Ghost Writer discuss→plan→ask→act). Sol §2b."""
+    """Plan before act (§10 discuss→plan→confirm→act)."""
     clean_names = [n.strip() for n in names if (n or "").strip()]
-    if not clean_names:
-        return (
-            "I need at least one company name to track. "
-            "Try Track FedEx or name a competitor."
-        )
+    if not clean_names and not unresolved:
+        return unresolved_companies_message()
 
-    modules = "site, pricing, changelog, and careers"
     added = [n for n in (merge_added or []) if n in clean_names]
+    current = [n.strip() for n in (merge_current or []) if (n or "").strip()]
 
-    if added and len(clean_names) > len(added):
-        existing = [n for n in clean_names if n not in added]
-        lead = (
-            f"I'll add **{', '.join(added)}** to your watch on "
-            f"**{', '.join(existing)}**."
+    if added and current:
+        full = ", ".join(clean_names)
+        return (
+            "Add to the current watch?\n\n"
+            f"Already watching: {', '.join(current)}\n"
+            f"Add: {', '.join(added)}\n"
+            f"Full list would be: {full}\n\n"
+            f"Modules: site, pricing, changelog, careers\n"
+            f"{_notify_line(notify=notify, channel=channel)}\n\n"
+            "Want me to update the watch and run a pulse?"
         )
-    elif len(clean_names) == 1:
-        lead = f"I'll watch **{clean_names[0]}** on the public web."
-    else:
-        lead = f"I'll watch **{', '.join(clean_names)}** on the public web."
 
-    fetch_line = (
-        "Live public HTTP fetch."
-        if allow_net
-        else "Offline fixtures (live fetch off)."
-    )
-    if notify:
-        notify_line = (
-            f"Notify: on. I'll ask before any {channel} alert on material moves."
+    companies_s = ", ".join(clean_names) if clean_names else "(none resolved)"
+    lines = ["Here's the watch plan:", "", f"Companies: {companies_s}"]
+    if unresolved:
+        lines.append(
+            f"Could not resolve: {', '.join(unresolved)}. "
+            "Say another name or spelling if you meant someone else."
         )
-    else:
-        notify_line = "Notify: off unless you ask for alerts."
-
-    confirm = (
-        f"Track {clean_names[0]} now?"
-        if len(clean_names) == 1
-        else f"Track {', '.join(clean_names)} now?"
+    lines.extend(
+        [
+            "Modules: site, pricing, changelog, careers",
+            _notify_line(notify=notify, channel=channel),
+            _first_run_line(has_baseline=has_baseline),
+            "",
+            "Want me to start this watch and run a pulse?",
+        ]
     )
+    return "\n".join(lines)
 
+
+def track_deny_message() -> str:
+    """§10 deny cue response."""
+    return "Okay, not running a pulse. Say Track … when you want to."
+
+
+def pulse_start_message(names: list[str]) -> str:
+    """§11c optional one-liner after confirm, before gather."""
+    names_s = ", ".join(n for n in names if n) or "your watchlist"
+    return f"On it. Fetching public pages for {names_s}."
+
+
+def unresolved_companies_message() -> str:
+    """§4 short error when names cannot be resolved."""
     return (
-        f"{lead}\n\n"
-        f"Modules: {modules}.\n"
-        f"Fetch: {fetch_line}\n"
-        f"{notify_line}\n\n"
-        "I will not notify anyone without your OK on this run. "
-        "First pass only sets a baseline; it is not a crisis.\n\n"
-        f"{confirm}"
+        "Could not resolve any competitors from that message. "
+        "Name companies like: Track Acme and Beta."
     )
+
+
+def partial_pass_message(names: list[str], gaps: list[str]) -> str:
+    """§4 degrade copy for partial fetch."""
+    names_s = ", ".join(names) if names else "your watchlist"
+    gap_s = ", ".join(gaps) if gaps else "some pages"
+    return (
+        f"Partial pass on {names_s}. Unreachable: {gap_s}. "
+        "I did not invent content for those pages. Brief covers only what I could fetch."
+    )
+
+
+def fetch_failed_message() -> str:
+    """§4 short error when whole watchlist fetch fails."""
+    return "Fetch failed for the whole watchlist. Fix network or fixtures and try Track … again."
 
 
 def welcome_message() -> str:
@@ -305,14 +320,12 @@ def other_message() -> str:
 
 
 def quiet_message(names: list[str], modules: list[str] | None = None) -> str:
-    """Quiet-run chat line when no material changes were detected (Sol §4)."""
+    """Quiet-run chat line when no material changes were detected (§4)."""
     _ = modules  # machine detail stays on state; not dumped in chat
     line = "Nothing material moved since your last baseline. Staying quiet."
     if names:
-        names_s = ", ".join(names)
         line += (
-            f"\n\nWatchlist still set ({names_s}); "
-            "say Track … again anytime you want a fresh pass."
+            "\n\nWatchlist still set; say Track … again anytime you want a fresh pass."
         )
     return line
 

@@ -73,7 +73,8 @@ def test_doctl_text_track_fedex_plan_clean(monkeypatch, tmp_path):
     assert not contains_watchlist_json(raw)
     assert '{"competitors"' not in raw
     assert "Got it" not in raw
-    assert "Track FedEx now?" in raw
+    assert "Here's the watch plan:" in raw
+    assert "Want me to start this watch and run a pulse?" in raw
     text = strip_doctl_artifacts(raw)
     assert text.lower().count("fedex") >= 1
 

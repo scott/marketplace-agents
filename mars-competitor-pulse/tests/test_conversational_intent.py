@@ -116,7 +116,7 @@ def test_track_fedex_plan_then_confirm_baseline(monkeypatch, tmp_path):
     assert plan.get("status") == "track_plan"
     plan_summary = assistant_summary(plan).lower()
     assert "fedex" in plan_summary
-    assert "track" in plan_summary
+    assert "watch" in plan_summary or "pulse" in plan_summary
     plan_summaries = " ".join(plan.get("stage_summaries") or [])
     assert "gather:" not in plan_summaries
 
