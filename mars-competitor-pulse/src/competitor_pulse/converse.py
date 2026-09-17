@@ -2,24 +2,7 @@
 
 from __future__ import annotations
 
-_TEMPLATE_CHAT = (
-    "Hey — I'm **Competitor Pulse**, your slightly obsessive GTM researcher.\n\n"
-    "Name a company (or a few) and I'll watch their public pages — site, pricing, "
-    "changelog, careers — and diff them against a baseline.\n\n"
-    "Try `track FedEx`, `Pulse on Cursor and Perplexity`, or ask **how this works**."
-)
-
-_TEMPLATE_HELP = (
-    "I'm **Competitor Pulse** — sharp, dry, and allergic to noisy alerts.\n\n"
-    "**What I do:** you name competitors → I fetch public pages → diff against a saved "
-    "baseline → send you a plain-English brief when something actually moves.\n\n"
-    "**How to use it:**\n"
-    "- `track OpenAI and Anthropic` — add companies to your watchlist\n"
-    "- `track Cursor and alert on Slack` — opt into the notify gate (approval required)\n"
-    "- Re-run later to see real diffs; first run is a **first look** baseline, not a crisis\n\n"
-    "**v1 limits (honest):** public web only, no competitor logins, notify is a stub until "
-    "you approve on material changes. Offline fixtures work when live fetch is off."
-)
+from competitor_pulse.persona import help_message, welcome_message
 
 _TEMPLATE_OTHER = (
     "Didn't quite catch that — want a pulse or a quick how-to?\n\n"
@@ -64,10 +47,10 @@ def _llm_reply(intent: str, human_text: str) -> str | None:
 
 def template_reply(intent: str) -> str:
     if intent == "help":
-        return _TEMPLATE_HELP
+        return help_message()
     if intent == "other":
         return _TEMPLATE_OTHER
-    return _TEMPLATE_CHAT
+    return welcome_message()
 
 
 def conversational_reply(intent: str, human_text: str) -> str:
