@@ -59,6 +59,7 @@ def test_doctl_text_hi_rejects_legacy_empty_list_input(monkeypatch):
 
 
 def test_doctl_text_track_fedex_first_run_clean(monkeypatch, tmp_path):
+    """NL track path: no JSON leaks; ack once (offline FedEx has no fixtures → quiet OK)."""
     _offline(monkeypatch)
     empty_bl = tmp_path / "empty.json"
     empty_bl.write_text(json.dumps({"version": 1, "entries": []}), encoding="utf-8")
@@ -74,6 +75,72 @@ def test_doctl_text_track_fedex_first_run_clean(monkeypatch, tmp_path):
     assert raw.count("Got it") == 1
     text = strip_doctl_artifacts(raw)
     assert text.lower().count("fedex") >= 1
+
+
+def test_doctl_text_first_run_baseline_body_once(monkeypatch, tmp_path):
+    """First-look assemble: Baseline set appears once (not summary+brief_md across ---)."""
+    _offline(monkeypatch)
+    from competitor_pulse.mars_text import prepare_programmatic_payload
+    from competitor_pulse.pulse_diff import (
+        default_fixture_dir,
+        default_watchlist,
+    )
+
+    empty_bl = tmp_path / "empty.json"
+    empty_bl.write_text(json.dumps({"version": 1, "entries": []}), encoding="utf-8")
+    g = compile_graph()
+    fixture_dir = default_fixture_dir()
+    payload = prepare_programmatic_payload(
+        {
+            "competitors": default_watchlist(),
+            "allow_net": False,
+            "notify": False,
+            "baseline_path": str(empty_bl),
+            "fixture_dir": str(fixture_dir),
+            "snapshot_dir": str(fixture_dir / "snapshots"),
+        }
+    )
+    raw = assemble_doctl_prompt_text(g, payload)
+    assert not contains_watchlist_json(raw)
+    assert raw.count("Baseline set") == 1
+    assert raw.count("No notify on a first look") == 1
+    assert raw.count("I saved public snapshots") == 1
+    assert "\n\n---\n\nBaseline set" not in raw
+
+
+def test_track_first_run_aimessage_has_single_baseline_body(monkeypatch, tmp_path):
+    """Report AIMessage: ack + one baseline section + captures; no duplicated brief."""
+    _offline(monkeypatch)
+    from langchain_core.messages import AIMessage
+
+    from competitor_pulse.mars_text import prepare_programmatic_payload
+    from competitor_pulse.pulse_diff import default_fixture_dir, default_watchlist
+
+    empty_bl = tmp_path / "empty.json"
+    empty_bl.write_text(json.dumps({"version": 1, "entries": []}), encoding="utf-8")
+    g = compile_graph()
+    fixture_dir = default_fixture_dir()
+    result = g.invoke(
+        prepare_programmatic_payload(
+            {
+                "competitors": default_watchlist(),
+                "allow_net": False,
+                "notify": False,
+                "baseline_path": str(empty_bl),
+                "fixture_dir": str(fixture_dir),
+                "snapshot_dir": str(fixture_dir / "snapshots"),
+            }
+        )
+    )
+    assert result.get("first_run") is True
+    assert result.get("status") == "baseline"
+    ai = next(m for m in reversed(result.get("messages") or []) if isinstance(m, AIMessage))
+    content = ai.content if isinstance(ai.content, str) else str(ai.content)
+    assert content.count("Baseline set") == 1
+    assert content.count("I saved public snapshots") == 1
+    assert result.get("brief_md")
+    assert result["brief_md"] in content
+    assert "\n\n---\n\n" not in content
 
 
 def test_doctl_text_hi_stream_updates_never_emit_human_summary(monkeypatch):

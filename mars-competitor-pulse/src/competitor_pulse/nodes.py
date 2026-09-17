@@ -73,10 +73,16 @@ def _now_iso() -> str:
 
 
 def _assistant_reply(summary: str, brief_md: str | None = None) -> dict[str, Any]:
-    """Build the final assistant-visible chat message for Agent Server / MARS UI."""
+    """Build the final assistant-visible chat message for Agent Server / MARS UI.
+
+    Only append ``brief_md`` when it adds new prose. First-look summaries already
+    embed ``brief_md`` (baseline + captures); re-appending duplicated the baseline
+    across a ``---`` separator in doctl ``text``.
+    """
     content = summary
-    if brief_md:
-        content = f"{summary}\n\n---\n\n{brief_md}"
+    brief = (brief_md or "").strip()
+    if brief and brief not in summary:
+        content = f"{summary}\n\n---\n\n{brief}"
     return {
         "messages": [
             AIMessage(content=content, name=ASSISTANT_DISPLAY_NAME),
@@ -938,15 +944,20 @@ def _chat_ack_from_state(state: PulseState | dict[str, Any]) -> str:
 
 
 def _format_first_run_report(state: PulseState) -> str:
+    """Ack + one baseline body (prefer draft ``brief_md``, which includes captures)."""
     ack = _chat_ack_from_state(state)
-    deltas = list(state.get("deltas") or [])
-    names = sorted({d.get("competitor") or "?" for d in deltas})
-    if not names:
-        names = list(state.get("watch_names") or []) or _watch_names_from(
-            _state_competitors(state)
-        )
-    gaps = list(state.get("fetch_gaps") or [])
-    body = first_look_message(names, gaps=gaps or None)
+    brief = (state.get("brief_md") or "").strip()
+    if brief:
+        body = brief
+    else:
+        deltas = list(state.get("deltas") or [])
+        names = sorted({d.get("competitor") or "?" for d in deltas})
+        if not names:
+            names = list(state.get("watch_names") or []) or _watch_names_from(
+                _state_competitors(state)
+            )
+        gaps = list(state.get("fetch_gaps") or [])
+        body = first_look_message(names, gaps=gaps or None)
     if ack:
         return f"{ack}\n\n{body}"
     return body
@@ -1026,10 +1037,14 @@ def report(state: PulseState) -> dict[str, Any]:
         if a
     ]
 
+    # First-look summary already includes brief_md; material/deny still attach it.
+    attach_brief = state.get("brief_md") or None
+    if out_status == "baseline":
+        attach_brief = None
     return {
         "status": out_status,
         "artifacts": artifacts,
         "next_hint": next_hint,
         "stage_summaries": _append_summary(state, "report: complete"),
-        **_assistant_reply(summary, state.get("brief_md") or None),
+        **_assistant_reply(summary, attach_brief),
     }
