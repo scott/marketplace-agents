@@ -13,11 +13,15 @@ from competitor_pulse.persona import (
 
 
 def test_welcome_has_safety_promise_and_starters():
-    w = welcome_message().lower()
-    assert "competitor pulse" in w
-    assert "without your ok" in w or "will not notify" in w
-    assert "openai" in w and "cursor" in w
-    assert "slack" in w
+    w = welcome_message()
+    wl = w.lower()
+    assert "competitor pulse" in wl
+    assert "without your ok" in wl or "will not notify" in wl
+    assert "Track OpenAI, Anthropic, and Google" in w
+    assert "Pulse on Cursor and Perplexity" in w
+    assert "Track Cursor and alert on Slack" in w
+    assert "—" not in w
+    assert " -- " not in w
 
 
 def test_help_mentions_v1_stub_and_modules():

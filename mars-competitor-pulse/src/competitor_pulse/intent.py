@@ -43,7 +43,13 @@ _HELP_RE = re.compile(
     r"notify(?:\s+gate)?|"
     r"mars\s+tips?|"
     r"getting\s+started|"
-    r"instructions?"
+    r"instructions?|"
+    r"modules?|"
+    r"what\s+do\s+you\s+watch|"
+    r"what'?s\s+material|"
+    r"material\s+bar|"
+    r"approve|"
+    r"deny"
     r")\b",
     re.IGNORECASE,
 )

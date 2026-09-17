@@ -1,10 +1,11 @@
 """Pulse persona — system prompt and user-facing copy builders.
 
-Canonical voice/copy: Shop design/PULSE-PERSONA-COPY.md (Sol).
+Canonical voice/copy: Shop design/PULSE-PERSONA-COPY.md (Sol, P1 depth).
 """
 
 from __future__ import annotations
 
+import re
 from datetime import date
 from typing import Any
 
@@ -30,6 +31,13 @@ _MODULE_PLAIN = {
     "careers": "careers page",
 }
 
+# Exact starters required by golden voice tests (PULSE-PERSONA-COPY §2 / §9).
+WELCOME_STARTERS = (
+    "Track OpenAI, Anthropic, and Google",
+    "Pulse on Cursor and Perplexity",
+    "Track Cursor and alert on Slack",
+)
+
 
 def module_plain(module: str) -> str:
     key = (module or "").strip().lower()
@@ -37,23 +45,21 @@ def module_plain(module: str) -> str:
 
 
 def welcome_message() -> str:
-    """Greeting for chat intent (hi / empty opener)."""
+    """Greeting for chat intent (hi / empty opener). Sol §2 — no em-dashes."""
+    starters = "\n".join(f"• {s}" for s in WELCOME_STARTERS)
     return (
-        "I'm Competitor Pulse — a research colleague for product and GTM.\n\n"
+        "I'm Competitor Pulse, a research colleague for product and GTM.\n\n"
         "I watch the public web for companies you name: site, pricing, changelog, and careers. "
         "I diff against your last baseline and write a short brief you can paste to Slack.\n\n"
         "I will not notify anyone without your OK. On the first pass I only set a baseline so "
         "later runs have something honest to compare.\n\n"
-        "Try one of these:\n"
-        "• Track OpenAI, Anthropic, and Google\n"
-        "• Pulse on Cursor and Perplexity\n"
-        "• Track Cursor and alert on Slack\n\n"
+        f"Try one of these:\n{starters}\n\n"
         "Or ask what I can do."
     )
 
 
 def help_message() -> str:
-    """Help / how-to reply for help intent."""
+    """Full help / how-to reply (Sol §3a)."""
     return (
         "Here's how I work:\n\n"
         "1. You name competitors in plain English (Track … / Pulse on …).\n"
@@ -70,6 +76,103 @@ def help_message() -> str:
     )
 
 
+def help_modules() -> str:
+    """Topic help: modules (Sol §3b)."""
+    return (
+        "I watch four public modules per competitor:\n\n"
+        "• Site: homepage / product marketing pages\n"
+        "• Pricing: public pricing page\n"
+        "• Changelog: release notes / what's new\n"
+        "• Careers: public careers / jobs page\n\n"
+        "Public HTTP only. If a page is down or blocked, I say so and I do not invent content."
+    )
+
+
+def help_material() -> str:
+    """Topic help: material bar (Sol §3c)."""
+    return (
+        "Material means the public page meaningfully changed vs your last baseline "
+        "(new tier, headline pricing shift, notable product claim, major careers signal). "
+        "Tiny crawl noise stays quiet.\n\n"
+        "First run never cries material: it only sets the baseline. Later runs compare against that snapshot."
+    )
+
+
+def help_approve_deny() -> str:
+    """Topic help: approve / deny (Sol §3d)."""
+    return (
+        "When notify is on and something material moved, I pause and ask.\n\n"
+        "• Approve (Send notify): keep the brief; record a stub notify id in this run. "
+        "v1 does not send real Slack/email.\n"
+        "• Deny (Quiet: keep brief): keep the brief local; send nothing.\n\n"
+        "I never contact competitors either way."
+    )
+
+
+def help_baselines() -> str:
+    """Topic help: baselines (Sol §3e)."""
+    return (
+        "A baseline is the last saved public snapshot set for your watchlist.\n\n"
+        "• First track: I save baselines and stay quiet (no notify ask).\n"
+        "• Later track: I diff new fetches against those baselines.\n"
+        "• Quiet path: nothing material moved; baselines can refresh with the same content hash "
+        "without an alert.\n\n"
+        "Ask me to Track … again anytime you want a fresh pass."
+    )
+
+
+_TOPIC_PATTERNS: list[tuple[re.Pattern[str], Any]] = [
+    (
+        re.compile(
+            r"\b(modules?|what\s+do\s+you\s+watch|site|pricing|changelog|careers)\b",
+            re.I,
+        ),
+        help_modules,
+    ),
+    (
+        re.compile(
+            r"\b(material|what'?s\s+material|material\s+bar|when\s+do\s+you\s+alert)\b",
+            re.I,
+        ),
+        help_material,
+    ),
+    (
+        re.compile(
+            r"\b(approve|deny|notify\s+gate|send\s+notify|quiet:\s*keep)\b",
+            re.I,
+        ),
+        help_approve_deny,
+    ),
+    (
+        re.compile(r"\b(baselines?|first\s+look|first\s+run|snapshot)\b", re.I),
+        help_baselines,
+    ),
+]
+
+
+def help_for_topic(human_text: str) -> str:
+    """Route help follow-ups to §3b–3e; generic help → §3a."""
+    text = (human_text or "").strip()
+    if not text:
+        return help_message()
+    # Prefer specific topic when the message is clearly about one area.
+    # "what do you do" / full how-to stays on §3a unless a topic keyword dominates.
+    generic = re.search(
+        r"\b(what\s+do\s+you\s+do|how\s+does\s+(?:this|it)\s+work|what\s+can\s+you\s+do|"
+        r"help(?:\s+me)?|getting\s+started|capabilities)\b",
+        text,
+        re.I,
+    )
+    if generic and not re.search(
+        r"\b(modules?|material|approve|deny|baselines?)\b", text, re.I
+    ):
+        return help_message()
+    for pattern, builder in _TOPIC_PATTERNS:
+        if pattern.search(text):
+            return builder()
+    return help_message()
+
+
 def other_message() -> str:
     """Ambiguous / other intent fallback."""
     return (
@@ -79,9 +182,9 @@ def other_message() -> str:
 
 
 def quiet_message(names: list[str], modules: list[str] | None = None) -> str:
-    """Quiet-run chat line when no material changes were detected."""
+    """Quiet-run chat line when no material changes were detected (Sol §4)."""
     _ = modules  # machine detail stays on state; not dumped in chat
-    line = "Nothing material moved since your last baseline — staying quiet."
+    line = "Nothing material moved since your last baseline. Staying quiet."
     if names:
         names_s = ", ".join(names)
         line += (
@@ -99,7 +202,7 @@ def ask_body(
     highlights: str,
     notify_draft: str,
 ) -> str:
-    """Human-in-the-loop notify approval interrupt body."""
+    """Human-in-the-loop notify approval interrupt body (Sol §5)."""
     names_s = ", ".join(names) if names else "your watchlist"
     return (
         f"Want me to send this pulse notify via {channel}?\n\n"
@@ -156,7 +259,7 @@ def material_chat_message(names: list[str], *, notify_off: bool = True) -> str:
 
 
 def deny_message() -> str:
-    return "Got it — staying quiet. Brief stays in this run; nothing sent."
+    return "Got it. Staying quiet. Brief stays in this run; nothing sent."
 
 
 def approve_stub_message(notify_id: str) -> str:
@@ -172,7 +275,7 @@ def notify_draft_text(
     names: list[str],
     deltas: list[dict[str, Any]],
 ) -> str:
-    """Short pasteable notify draft."""
+    """Short pasteable notify draft (Sol §6)."""
     names_s = ", ".join(names) if names else "watchlist"
     lines = [f"Pulse: {delta_count} material change(s) on {names_s}."]
     for d in deltas[:7]:
@@ -180,6 +283,12 @@ def notify_draft_text(
         summary = (d.get("summary") or "").strip() or "public page moved"
         lines.append(f"- {name}: {summary}")
     return "\n".join(lines)
+
+
+def human_summary_line(*, delta_count: int, names: list[str]) -> str:
+    """Short prose line for logs/chat — never 'Counterposition brief ready…'."""
+    names_s = ", ".join(names) if names else "watchlist"
+    return f"Brief ready: {delta_count} material moves on {names_s}."
 
 
 def response_implication(delta: dict[str, Any]) -> str:
@@ -218,7 +327,7 @@ def brief_prose(
     run_label: str | None = None,
     gaps: list[str] | None = None,
 ) -> str:
-    """Markdown brief for material or first-look pulse runs."""
+    """Markdown brief for material or first-look pulse runs (Sol §6 template)."""
     names = sorted({str(d.get("competitor") or "?") for d in deltas}) or []
     names_s = ", ".join(names) if names else "your watchlist"
 
@@ -258,7 +367,7 @@ def brief_prose(
         else f"Material moves on {names_s}."
     )
     lines = [
-        f"# Competitor pulse — {label}",
+        f"# Competitor pulse ({label})",
         "",
         thesis,
         "",
@@ -281,5 +390,30 @@ def brief_prose(
     if responses:
         lines.extend(["", "## How we might respond"])
         for r in responses:
-            lines.append(f"- {r}")
+            # Never emit Counter/review prefixes even if a caller passes one.
+            cleaned = re.sub(r"(?i)^Counter\s+\S+/\S+:\s*review\s+\S+\s*[—–-]?\s*", "", r).strip()
+            if cleaned:
+                lines.append(f"- {cleaned}")
     return "\n".join(lines)
+
+
+def draft_task_prompt(*, deltas_json: str, run_label: str) -> str:
+    """User/task prompt for optional LLM draft node (Sol §7)."""
+    return (
+        "Turn these material deltas into a counterposition brief a PM can paste to Slack.\n\n"
+        "Rules:\n"
+        "- Use ONLY the deltas and evidence URLs provided. Do not invent competitors, numbers, or pages.\n"
+        "- Output markdown matching this shape:\n"
+        f"  # Competitor pulse ({run_label})\n"
+        "  {one-sentence thesis}\n"
+        "  ## What changed\n"
+        "  - **{Name}** ({module plain words}): {summary}. Evidence: {url}\n"
+        "  ## How we might respond\n"
+        "  - {one implication sentence each}\n"
+        "- Module plain words: site → homepage / product site; pricing → pricing page; "
+        "changelog → changelog / release notes; careers → careers page.\n"
+        '- Never write "Counter Name/module: review change_type".\n'
+        "- Never use em-dashes or double hyphens.\n"
+        "- Also produce a short notify_draft (Pulse: N material change(s) on Names. + bullets).\n\n"
+        f"DELTAS (JSON):\n{deltas_json}"
+    )

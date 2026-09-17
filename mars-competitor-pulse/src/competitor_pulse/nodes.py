@@ -19,6 +19,8 @@ from competitor_pulse.chat import (
 )
 from competitor_pulse.converse import conversational_reply
 from competitor_pulse.intent import classify_intent
+from competitor_pulse.draft_llm import synthesize_material_draft
+from competitor_pulse.hygiene import hygiene_text
 from competitor_pulse.persona import (
     approve_stub_message,
     ask_body,
@@ -27,9 +29,7 @@ from competitor_pulse.persona import (
     deny_message,
     first_look_message,
     material_chat_message,
-    notify_draft_text,
     quiet_message,
-    response_implication,
 )
 from competitor_pulse.intake_parse import parse_notify_from_message, parse_watchlist_from_message
 from competitor_pulse.pulse_diff import (
@@ -78,11 +78,12 @@ def _assistant_reply(summary: str, brief_md: str | None = None) -> dict[str, Any
     Only append ``brief_md`` when it adds new prose. First-look summaries already
     embed ``brief_md`` (baseline + captures); re-appending duplicated the baseline
     across a ``---`` separator in doctl ``text``.
+    Hygiene runs on every user-facing AIMessage before emit (Sol §8).
     """
-    content = summary
-    brief = (brief_md or "").strip()
-    if brief and brief not in summary:
-        content = f"{summary}\n\n---\n\n{brief}"
+    content = hygiene_text(summary or "")
+    brief = hygiene_text((brief_md or "").strip())
+    if brief and brief not in content:
+        content = f"{content}\n\n---\n\n{brief}"
     return {
         "messages": [
             AIMessage(content=content, name=ASSISTANT_DISPLAY_NAME),
@@ -362,7 +363,7 @@ def _delta_bullet(d: dict[str, Any]) -> str:
     url = d.get("evidence_url") or ""
     line = f"- **{comp}** ({module}): {summary}"
     if url:
-        line += f" — {url}"
+        line += f". Evidence: {url}"
     return line
 
 
@@ -757,11 +758,12 @@ def draft(state: PulseState) -> dict[str, Any]:
         }
 
     delta_count = len(deltas)
-    names = sorted({d.get("competitor") or "?" for d in deltas})
     gaps = list(state.get("fetch_gaps") or [])
 
     if first_run:
-        brief_md = brief_prose(first_run=True, deltas=deltas, gaps=gaps or None)
+        brief_md = hygiene_text(
+            brief_prose(first_run=True, deltas=deltas, gaps=gaps or None)
+        )
         return {
             "brief_md": brief_md,
             "counterpositions": [],
@@ -773,30 +775,18 @@ def draft(state: PulseState) -> dict[str, Any]:
             ),
         }
 
-    counterpositions = [
-        line
-        for d in deltas[:7]
-        for line in [response_implication(d)]
-        if line
-    ]
-    brief_md = brief_prose(
-        first_run=False,
-        deltas=deltas,
-        counterpositions=counterpositions,
-    )
-    notify_draft = notify_draft_text(
-        delta_count=delta_count,
-        names=names,
-        deltas=deltas,
-    )
+    # Diffs stay deterministic; synthesis is template by default.
+    # LLM path is opt-in via COMPETITOR_PULSE_LLM_DRAFT (off) — MARS stream leak risk.
+    synthesized = synthesize_material_draft(deltas)
     return {
-        "brief_md": brief_md,
-        "counterpositions": counterpositions,
+        "brief_md": synthesized["brief_md"],
+        "counterpositions": synthesized["counterpositions"],
         "delta_count": delta_count,
-        "notify_draft": notify_draft,
+        "notify_draft": synthesized["notify_draft"],
         "status": "ok",
         "stage_summaries": _append_summary(
-            state, f"draft: brief with {delta_count} deltas"
+            state,
+            f"draft: brief with {delta_count} deltas ({synthesized.get('draft_source', 'template')})",
         ),
     }
 
@@ -865,12 +855,14 @@ def ask(state: PulseState) -> dict[str, Any]:
     highlights = ask_highlights(deltas, limit=7)
     notify_draft = state.get("notify_draft") or "(empty draft)"
 
-    body = ask_body(
-        channel=channel,
-        delta_count=int(delta_count),
-        names=names,
-        highlights=highlights,
-        notify_draft=notify_draft,
+    body = hygiene_text(
+        ask_body(
+            channel=channel,
+            delta_count=int(delta_count),
+            names=names,
+            highlights=highlights,
+            notify_draft=notify_draft,
+        )
     )
     payload = {
         "title": "Notify about competitor changes?",
@@ -929,9 +921,9 @@ def _chat_ack_from_state(state: PulseState | dict[str, Any]) -> str:
     if not names:
         return ""
     if len(names) == 1:
-        lead = f"Got it — setting up a watch on **{names[0]}**."
+        lead = f"Got it: setting up a watch on **{names[0]}**."
     else:
-        lead = f"Got it — watching **{', '.join(names)}**."
+        lead = f"Got it: watching **{', '.join(names)}**."
     fetch_mode = (
         "Live public fetch is **on**."
         if state.get("allow_net")

@@ -8,16 +8,17 @@ prose-once and never stream JSON.
 
 from __future__ import annotations
 
+from competitor_pulse.hygiene import hygiene_text
 from competitor_pulse.persona import (
-    help_message,
+    help_for_topic,
     other_message,
     welcome_message,
 )
 
 
-def template_reply(intent: str) -> str:
+def template_reply(intent: str, human_text: str = "") -> str:
     if intent == "help":
-        return help_message()
+        return help_for_topic(human_text)
     if intent == "other":
         return other_message()
     return welcome_message()
@@ -25,5 +26,4 @@ def template_reply(intent: str) -> str:
 
 def conversational_reply(intent: str, human_text: str) -> str:
     """Deterministic Sol persona templates — never llm.invoke on the chat path."""
-    _ = human_text  # reserved for future template variants
-    return template_reply(intent)
+    return hygiene_text(template_reply(intent, human_text))
