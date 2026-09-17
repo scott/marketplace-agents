@@ -17,7 +17,13 @@ import urllib.request
 from typing import Any
 
 from competitor_pulse.llm import harness_env_available, resolve_llm_env
-from competitor_pulse.persona import PULSE_SYSTEM_PROMPT
+from competitor_pulse.persona import (
+    ASK_SYSTEM_PROMPT,
+    BRIEF_SYSTEM_PROMPT,
+    CHAT_SYSTEM_PROMPT,
+    PULSE_SYSTEM_PROMPT,
+    TRACK_PLAN_SYSTEM_PROMPT,
+)
 
 _VALID_INTENTS = frozenset({"chat", "help", "pulse", "other"})
 
@@ -26,23 +32,20 @@ _CLASSIFY_SYSTEM = """You classify user messages for Competitor Pulse, a product
 Return exactly one word, lowercase, nothing else:
 - chat — greetings, small talk, banter, jokes, weather, how-are-you, unclear chit-chat, brainstorming companies without a clear track ask yet
 - help — how the agent works, capabilities, baselines, modules, notify, approve/deny
-- pulse — user clearly wants to track/watch/pulse/monitor named or confirmed competitors now
+- pulse — user clearly confirmed they want to track/watch/pulse/monitor named competitors NOW (after a plan or explicit "track X now")
 - other — anything else that is not clearly chat, help, or pulse
 
-Greetings and small talk → chat. How-it-works → help. Name competitors to track/pulse → pulse."""
+Greetings and small talk → chat. How-it-works → help. Name competitors to track without confirm → other (plan gate handles track). Clear yes/go ahead after a plan → pulse."""
 
-_REPLY_SYSTEM = (
-    PULSE_SYSTEM_PROMPT
-    + """
-
-Conversational mode (no pulse run yet):
-- Answer as a collaborative research colleague (Ghost Writer style): concrete, short, no helpdesk filler.
-- If the user describes a company without naming it, suggest the best-fit public company (or honest alternatives) and ask whether to track it (e.g. "Track Tesla?").
-- If they greet or make small talk, be brief and warm, then offer to track competitors or explain how you work.
-- Never dump JSON, stage names, or tool traces. Never invent that you already fetched pages.
-- Never notify or claim you notified. Offer track/pulse; wait for a clear yes or "Track …".
-"""
-)
+_MODE_PROMPTS = {
+    "chat": CHAT_SYSTEM_PROMPT,
+    "help": CHAT_SYSTEM_PROMPT,
+    "other": CHAT_SYSTEM_PROMPT,
+    "track_plan": TRACK_PLAN_SYSTEM_PROMPT,
+    "brief": BRIEF_SYSTEM_PROMPT,
+    "ask": ASK_SYSTEM_PROMPT,
+    "pulse": PULSE_SYSTEM_PROMPT,
+}
 
 
 def _inference_ready() -> bool:
@@ -134,14 +137,15 @@ def conversational_reply_llm(intent: str, human_text: str) -> str | None:
     if not stripped:
         return None
     label = intent if intent in _VALID_INTENTS else "chat"
+    system = _MODE_PROMPTS.get(label, CHAT_SYSTEM_PROMPT)
     user = (
         f"Intent hint: {label}\n"
         f"User message:\n{stripped}\n\n"
-        "Reply in plain prose for the operator. If suggesting a company, offer to track it."
+        "Reply in plain prose for the operator. If suggesting a company, end with an offer to track it."
     )
     return chat_completions(
         [
-            {"role": "system", "content": _REPLY_SYSTEM},
+            {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
         temperature=0.3,

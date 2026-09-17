@@ -30,7 +30,9 @@ from competitor_pulse.persona import (
     first_look_message,
     material_chat_message,
     quiet_message,
+    track_plan_message,
 )
+from competitor_pulse.intent import is_track_confirm
 from competitor_pulse.intake_parse import (
     is_merge_request,
     parse_notify_from_message,
@@ -126,6 +128,17 @@ def _state_competitors(state: PulseState | dict[str, Any]) -> list[dict[str, Any
     return []
 
 
+def _pending_track(state: PulseState | dict[str, Any]) -> dict[str, Any] | None:
+    top = state.get("pending_track")
+    if isinstance(top, dict):
+        return top
+    internal = state.get("internal")
+    if not isinstance(internal, dict):
+        return None
+    pending = internal.get("pending_track")
+    return pending if isinstance(pending, dict) else None
+
+
 def _competitors_update(
     state: PulseState | dict[str, Any],
     competitors: list[dict[str, Any]] | None,
@@ -154,11 +167,10 @@ def _competitors_from_update(full: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _mars_stream_safe_update(full: dict[str, Any]) -> dict[str, Any]:
-    """Drop internal/competitors/chat_ack from node stream updates.
+    """Drop raw competitor lists from node stream updates.
 
-    ``chat_ack`` is rebuilt in report from ``watch_names`` — returning it from
-    intake *and* execute_pulse made doctl concatenate the ack multiple times
-    before the final AIMessage (which also embeds the ack).
+    ``pending_track`` passes through for multi-turn confirm (not in output schema).
+    ``chat_ack`` is rebuilt in report from ``watch_names``.
     """
     return {
         key: value
@@ -447,12 +459,14 @@ def intake(state: PulseState) -> dict[str, Any]:
 
     parsed_nl = parse_watchlist_from_message(nl_text) if nl_text else {}
     overlay_competitors = _competitors_from_payload(overlay) if overlay else None
+    pending = _pending_track(state)
     intent = classify_intent(
         nl_text,
         state_watchlist=_state_competitors(state),
         overlay_watchlist=overlay_competitors,
         overlay_preset=overlay.get("preset"),
         parsed_nl=parsed_nl,
+        pending_track=pending,
     )
 
     if intent in {"chat", "help", "other"}:
@@ -469,9 +483,109 @@ def intake(state: PulseState) -> dict[str, Any]:
             **_assistant_reply(reply, None),
         }
 
-    resolved = _resolve_competitors(state, overlay, nl_text)
-    watchlist = list(resolved.get("competitors") or [])
-    from_nl = bool(resolved.get("from_nl"))
+    if intent == "track_plan":
+        resolved = _resolve_competitors(state, overlay, nl_text)
+        watchlist = list(resolved.get("competitors") or [])
+        if resolved.get("blocked"):
+            blocked_summary = resolved.get("blocked_summary") or (
+                "Could not resolve companies to track."
+            )
+            return {
+                "status": "blocked",
+                "notify": False,
+                "blocked_reason": blocked_summary,
+                "stage_summaries": _append_summary(
+                    state, f"intake: blocked — {blocked_summary}"
+                ),
+                "deltas": [],
+                "material": False,
+                "skipped": False,
+            }
+
+        if "notify" in overlay:
+            notify = bool(overlay.get("notify"))
+        elif resolved.get("notify") is not None:
+            notify = bool(resolved.get("notify"))
+        elif nl_text.strip():
+            notify = bool(parse_notify_from_message(nl_text) or False)
+        else:
+            notify = False
+
+        channel = (
+            overlay.get("channel")
+            or (state.get("channel") or "slack").strip()
+            or "slack"
+        )
+        if "allow_net" in overlay:
+            allow_net = bool(overlay.get("allow_net"))
+        elif "allow_net" in state:
+            allow_net = bool(state.get("allow_net"))
+        elif resolved.get("from_nl"):
+            allow_net = True
+        else:
+            allow_net = allow_network()
+
+        merge_added: list[str] | None = None
+        if parsed_nl.get("is_merge") or is_merge_request(nl_text):
+            state_list = _state_competitors(state)
+            if state_list:
+                incoming_names = {
+                    (item.get("name") or "").strip()
+                    for item in watchlist
+                    if (item.get("name") or "").strip()
+                }
+                existing_names = {
+                    (item.get("name") or "").strip()
+                    for item in state_list
+                    if (item.get("name") or "").strip()
+                }
+                added = sorted(incoming_names - existing_names)
+                if added:
+                    merge_added = added
+
+        names = _watch_names_from(watchlist)
+        plan = track_plan_message(
+            names,
+            notify=notify,
+            channel=channel,
+            allow_net=allow_net,
+            merge_added=merge_added,
+        )
+        pending_payload = {
+            "competitors": watchlist,
+            "notify": notify,
+            "allow_net": allow_net,
+            "channel": channel,
+        }
+        return {
+            "intent": "track_plan",
+            "status": "track_plan",
+            "material": False,
+            "skipped": False,
+            "notified": False,
+            "pending_track": pending_payload,
+            **_assistant_reply(plan, None),
+        }
+
+    # pulse — confirmed track, programmatic invoke, or JSON overlay
+    confirmed_pending = bool(
+        pending and nl_text.strip() and is_track_confirm(nl_text)
+    )
+    if confirmed_pending:
+        watchlist = list(pending.get("competitors") or [])
+        notify = bool(pending.get("notify"))
+        allow_net = bool(pending.get("allow_net"))
+        channel = (pending.get("channel") or "slack").strip() or "slack"
+        from_nl = True
+        resolved = {
+            "competitors": watchlist,
+            "from_nl": True,
+            "blocked": False,
+        }
+    else:
+        resolved = _resolve_competitors(state, overlay, nl_text)
+        watchlist = list(resolved.get("competitors") or [])
+        from_nl = bool(resolved.get("from_nl"))
 
     if resolved.get("blocked"):
         blocked_summary = resolved.get("blocked_summary") or (
@@ -489,22 +603,23 @@ def intake(state: PulseState) -> dict[str, Any]:
             "skipped": False,
         }
 
-    if "notify" in overlay:
-        notify = bool(overlay.get("notify"))
-    elif "notify" in state:
-        notify = bool(state.get("notify"))
-    elif resolved.get("notify") is not None:
-        notify = bool(resolved.get("notify"))
-    elif nl_text.strip():
-        notify = bool(parse_notify_from_message(nl_text) or False)
-    else:
-        notify = False
+    if not confirmed_pending:
+        if "notify" in overlay:
+            notify = bool(overlay.get("notify"))
+        elif "notify" in state:
+            notify = bool(state.get("notify"))
+        elif resolved.get("notify") is not None:
+            notify = bool(resolved.get("notify"))
+        elif nl_text.strip():
+            notify = bool(parse_notify_from_message(nl_text) or False)
+        else:
+            notify = False
 
-    channel = (
-        overlay.get("channel")
-        or (state.get("channel") or "slack").strip()
-        or "slack"
-    )
+        channel = (
+            overlay.get("channel")
+            or (state.get("channel") or "slack").strip()
+            or "slack"
+        )
     fixture_dir = (state.get("fixture_dir") or "").strip() or str(
         default_fixture_dir()
     )
@@ -514,20 +629,21 @@ def intake(state: PulseState) -> dict[str, Any]:
     snapshot_dir = (state.get("snapshot_dir") or "").strip() or str(
         default_snapshot_dir()
     )
-    if "allow_net" in overlay:
-        allow_net = bool(overlay.get("allow_net"))
-    elif "allow_net" in state:
-        allow_net = bool(state.get("allow_net"))
-    elif from_nl:
-        allow_net = True
-    else:
-        allow_net = allow_network()
+    if not confirmed_pending:
+        if "allow_net" in overlay:
+            allow_net = bool(overlay.get("allow_net"))
+        elif "allow_net" in state:
+            allow_net = bool(state.get("allow_net"))
+        elif from_nl:
+            allow_net = True
+        else:
+            allow_net = allow_network()
 
     from_chat = bool(from_nl or nl_text.strip())
     chat_ack = format_watch_ack(
         watchlist, allow_net=allow_net, from_chat=from_chat
     )
-    return {
+    pulse_update: dict[str, Any] = {
         "intent": "pulse",
         **_competitors_update(state, watchlist),
         "notify": notify,
@@ -545,6 +661,7 @@ def intake(state: PulseState) -> dict[str, Any]:
         "deltas": [],
         "material": False,
     }
+    return pulse_update
 
 
 def intake_node(state: PulseState) -> dict[str, Any]:
@@ -555,12 +672,19 @@ def intake_node(state: PulseState) -> dict[str, Any]:
 def execute_pulse(state: PulseState) -> dict[str, Any]:
     """Run plan→draft as one streamed node; restore watchlist internally."""
     current: dict[str, Any] = dict(state)
-    if current.get("intent") == "pulse" and not _state_competitors(current):
-        current.update(intake(state))
+    if current.get("intent") == "pulse":
+        # intake_node strips internal for MARS stream; merge full intake here so
+        # confirm-yes and NL re-parse paths both resolve competitors.
+        merged = intake(state)
+        for key, value in merged.items():
+            if key == "messages":
+                continue
+            current[key] = value
     for stage in (plan, gather, analyze, draft):
         update = stage(current)  # type: ignore[arg-type]
         if update:
             current.update(update)
+    current["pending_track"] = None
     return _mars_safe_pulse_update(current)
 
 
@@ -846,12 +970,12 @@ def draft(state: PulseState) -> dict[str, Any]:
 
 
 def route_after_intake(state: PulseState) -> str:
-    """Chat/help/other already emitted AIMessage in intake — end (diag-shaped).
+    """Chat/help/other/track_plan already emitted AIMessage in intake — end.
 
     Pulse continues to execute_pulse; blocked goes to report.
     """
     intent = (state.get("intent") or "pulse").strip().lower()
-    if intent in {"chat", "help", "other"}:
+    if intent in {"chat", "help", "other", "track_plan"}:
         return "end"
     if state.get("status") == "blocked":
         return "report"
@@ -913,7 +1037,7 @@ def ask(state: PulseState) -> dict[str, Any]:
         )
     )
     payload = {
-        "title": "Notify about competitor changes?",
+        "title": f"Want me to send this pulse notify via {channel}?",
         "body": body,
         "pending_action": "notify",
         "channel": channel,

@@ -17,6 +17,7 @@ class InternalState(TypedDict, total=False):
     """Graph-internal payload — never in input/output schemas or MARS stream text."""
 
     competitors: list[dict[str, Any]]
+    pending_track: dict[str, Any]
 
 
 class InputState(TypedDict, total=False):
@@ -33,6 +34,7 @@ class InputState(TypedDict, total=False):
     force_empty: bool
     force_material: bool
     force_blocked: bool
+    pending_track: dict[str, Any]
 
 
 class OutputState(TypedDict, total=False):
@@ -59,10 +61,11 @@ class PulseState(TypedDict, total=False):
     # Chat / intake (tests and legacy invoke)
     user_message: str
     chat_ack: str
-    intent: str  # chat | help | pulse | other
+    intent: str  # chat | help | track_plan | pulse | other
 
     # Internal graph payload (not in InputState / OutputState / doctl text)
     internal: InternalState
+    pending_track: dict[str, Any]
     watch_names: list[str]  # MARS-safe names (no raw watchlist JSON in stream)
     blocked_reason: str
     notify: bool

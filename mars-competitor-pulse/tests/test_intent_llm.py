@@ -44,10 +44,10 @@ def test_state_competitors_plus_hey_still_chat():
     assert classify_intent("what do you do?", state_watchlist=wl) == "help"
 
 
-def test_track_fedex_still_pulse_with_state():
+def test_track_fedex_is_track_plan_with_state():
     wl = [{"name": "Acme", "urls": {}}]
-    assert classify_intent("track fedex", state_watchlist=wl) == "pulse"
-    assert classify_intent("can you watch Shopify for me") == "pulse"
+    assert classify_intent("track fedex", state_watchlist=wl) == "track_plan"
+    assert classify_intent("can you watch Shopify for me") == "track_plan"
 
 
 def test_empty_still_pulse_programmatic():

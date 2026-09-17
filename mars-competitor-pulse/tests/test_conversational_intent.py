@@ -28,7 +28,7 @@ def test_classify_chat_and_help():
     assert classify_intent("thanks!") == "chat"
     assert classify_intent("what do you do?") == "help"
     assert classify_intent("how does this work") == "help"
-    assert classify_intent("track fedex") == "pulse"
+    assert classify_intent("track fedex") == "track_plan"
     assert classify_intent("") == "pulse"
     assert classify_intent("hey", state_watchlist=[{"name": "FedEx"}]) == "chat"
     assert is_chat_message("hey there") is False  # not exact generic
@@ -97,14 +97,14 @@ def test_run_alone_not_acme_fixture(monkeypatch):
     assert "gather:" not in summaries
 
 
-def test_track_fedex_still_baseline_pulse(monkeypatch, tmp_path):
-    """Track intent keeps first-run baseline UX — not conversational."""
+def test_track_fedex_plan_then_confirm_baseline(monkeypatch, tmp_path):
+    """Track intent plans first; confirm runs first-run baseline UX."""
     _offline(monkeypatch)
     empty_bl = tmp_path / "empty.json"
     empty_bl.write_text(json.dumps({"version": 1, "entries": []}), encoding="utf-8")
 
     g = compile_graph()
-    result = invoke_graph_full(
+    plan = invoke_graph_full(
         g,
         {
             "user_message": "track fedex",
@@ -113,8 +113,27 @@ def test_track_fedex_still_baseline_pulse(monkeypatch, tmp_path):
             "allow_net": False,
         },
     )
+    assert plan.get("status") == "track_plan"
+    plan_summary = assistant_summary(plan).lower()
+    assert "fedex" in plan_summary
+    assert "track" in plan_summary
+    plan_summaries = " ".join(plan.get("stage_summaries") or [])
+    assert "gather:" not in plan_summaries
+
+    pending = plan.get("pending_track")
+    assert pending
+    result = invoke_graph_full(
+        g,
+        {
+            "messages": [HumanMessage(content="yes")],
+            "pending_track": pending,
+            "notify": False,
+            "baseline_path": str(empty_bl),
+            "allow_net": False,
+        },
+    )
     summary = assistant_summary(result).lower()
-    assert result.get("status") not in {"chat", "help", "other"}
+    assert result.get("status") not in {"chat", "help", "other", "track_plan"}
     assert "fedex" in summary
     assert "acme" not in summary
     summaries = " ".join(result.get("stage_summaries") or [])
