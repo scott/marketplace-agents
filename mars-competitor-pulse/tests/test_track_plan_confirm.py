@@ -34,6 +34,43 @@ def test_confirm_with_pending_is_pulse():
     assert is_track_confirm("track it")
 
 
+def test_combined_confirm_phrases():
+    """Combined acks like 'yes, track it' must confirm (MARS smoke regression)."""
+    pending = {"competitors": [{"name": "Tesla", "urls": {}}]}
+    for phrase in (
+        "yes, track it",
+        "yes track it",
+        "yes — track it",
+        "ok, do it",
+        "yep, go ahead",
+        "sure, proceed",
+        "sounds good!",
+        "let's go",
+        "confirmed",
+    ):
+        assert is_track_confirm(phrase), phrase
+        assert classify_intent(phrase, pending_track=pending) == "pulse", phrase
+
+
+def test_yes_track_pending_name_is_pulse():
+    pending = {"competitors": [{"name": "Tesla", "urls": {}}]}
+    assert is_track_confirm("Yes, track Tesla", pending_names=["Tesla"])
+    assert classify_intent("Yes, track Tesla", pending_track=pending) == "pulse"
+    assert classify_intent("yes track tesla", pending_track=pending) == "pulse"
+
+
+def test_track_fedex_still_track_plan_not_confirm():
+    """Bare 'track FedEx' is a new plan request, never a false confirm."""
+    assert not is_track_confirm("track FedEx")
+    assert not is_track_confirm("track FedEx", pending_names=["Tesla"])
+    assert not is_track_confirm("track FedEx", pending_names=["FedEx"])
+    assert classify_intent("track FedEx") == "track_plan"
+    pending_tesla = {"competitors": [{"name": "Tesla", "urls": {}}]}
+    # Without matching confirm words, new company request stays track_plan
+    # even when something else is pending.
+    assert classify_intent("track FedEx", pending_track=pending_tesla) == "track_plan"
+
+
 def test_tesla_too_plan_no_immediate_baseline(monkeypatch, tmp_path):
     """Add Tesla too → plan/confirm; no gather until yes."""
     _offline(monkeypatch)

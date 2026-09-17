@@ -30,14 +30,17 @@ _STANDALONE_CHAT_ACK_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Ack words and confirm actions (also combined: "yes, track it").
+_TRACK_CONFIRM_ACK = r"(?:yes|yep|yeah|yup|sure|ok|okay)"
+_TRACK_CONFIRM_ACTION = (
+    r"(?:go\s+ahead|go\s+for\s+it|do\s+it|proceed|"
+    r"track\s+it|track\s+them|start|run\s+it|"
+    r"sounds\s+good|let'?s\s+go|lets\s+go|"
+    r"confirmed|confirm)"
+)
 _TRACK_CONFIRM_RE = re.compile(
-    r"^(?:"
-    r"yes|yep|yeah|yup|sure|ok|okay|"
-    r"go ahead|go for it|do it|proceed|"
-    r"track it|track them|start|run it|"
-    r"sounds good|let'?s go|lets go|"
-    r"confirmed|confirm"
-    r")\s*[!.?]*$",
+    rf"^(?:{_TRACK_CONFIRM_ACK}(?:\s*[,;:–—\-]?\s*{_TRACK_CONFIRM_ACTION})?"
+    rf"|{_TRACK_CONFIRM_ACTION})\s*[!.?]*$",
     re.IGNORECASE,
 )
 
@@ -83,12 +86,73 @@ def is_chat_message(text: str) -> bool:
     return bool(_CHAT_RE.match(stripped))
 
 
-def is_track_confirm(text: str) -> bool:
-    """True when the operator confirms a pending track plan."""
+def _pending_competitor_names(pending_track: dict[str, Any] | None) -> list[str]:
+    if not pending_track:
+        return []
+    return [
+        (item.get("name") or "").strip()
+        for item in (pending_track.get("competitors") or [])
+        if isinstance(item, dict) and (item.get("name") or "").strip()
+    ]
+
+
+def _is_confirm_with_pending_names(text: str, pending_names: list[str]) -> bool:
+    """Confirm when message is ack/action plus only pending competitor names.
+
+    Matches e.g. "Yes, track Tesla" when Tesla is pending. Does not match bare
+    "track FedEx" (new request) even if FedEx is pending.
+    """
+    names = {(n or "").strip().lower() for n in pending_names if (n or "").strip()}
+    if not names:
+        return False
+    core = re.sub(r"[!.?]+$", "", text).strip()
+    if not core:
+        return False
+
+    # yes/ok/... [, —] track <Name> (Name must be pending; optional multi-name)
+    m = re.match(
+        rf"^{_TRACK_CONFIRM_ACK}\s*[,;:–—\-]?\s*track\s+(.+)$",
+        core,
+        re.IGNORECASE,
+    )
+    if m:
+        named = m.group(1).strip().lower()
+        if named in names:
+            return True
+        parts = [p.strip() for p in re.split(r"\s+and\s+|\s*,\s*", named) if p.strip()]
+        if parts and all(part in names for part in parts):
+            return True
+
+    # Short message: confirm phrasing + optional pending names only.
+    residual = core
+    for name in sorted(names, key=len, reverse=True):
+        residual = re.sub(re.escape(name), " ", residual, flags=re.IGNORECASE)
+    residual = re.sub(r"[,;:–—\-]+", " ", residual)
+    residual = re.sub(r"\s+", " ", residual).strip()
+    if not residual:
+        # Company name alone is not a confirm.
+        return False
+    return bool(_TRACK_CONFIRM_RE.match(residual))
+
+
+def is_track_confirm(
+    text: str,
+    pending_names: list[str] | None = None,
+) -> bool:
+    """True when the operator confirms a pending track plan.
+
+    Matches bare acks/actions and combined phrases ("yes, track it"). When
+    ``pending_names`` is provided, also matches ack + track <pending name>
+    and short messages that only add those pending names.
+    """
     stripped = (text or "").strip()
     if not stripped:
         return False
-    return bool(_TRACK_CONFIRM_RE.match(stripped))
+    if _TRACK_CONFIRM_RE.match(stripped):
+        return True
+    if pending_names:
+        return _is_confirm_with_pending_names(stripped, pending_names)
+    return False
 
 
 def is_help_message(text: str) -> bool:
@@ -159,8 +223,10 @@ def classify_intent(
     parsed = parsed_nl if parsed_nl is not None else parse_watchlist_from_message(stripped)
 
     # 3. Confirm pending track plan → pulse
-    if pending_track and stripped and is_track_confirm(stripped):
-        return "pulse"
+    if pending_track and stripped:
+        pending_names = _pending_competitor_names(pending_track)
+        if is_track_confirm(stripped, pending_names=pending_names):
+            return "pulse"
 
     # 4. Resolved competitors from NL → track_plan (discuss → plan → ask)
     if parsed.get("competitors") or parsed.get("watchlist"):

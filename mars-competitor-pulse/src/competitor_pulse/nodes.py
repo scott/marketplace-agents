@@ -568,8 +568,15 @@ def intake(state: PulseState) -> dict[str, Any]:
         }
 
     # pulse — confirmed track, programmatic invoke, or JSON overlay
+    pending_names = [
+        (item.get("name") or "").strip()
+        for item in ((pending or {}).get("competitors") or [])
+        if isinstance(item, dict) and (item.get("name") or "").strip()
+    ]
     confirmed_pending = bool(
-        pending and nl_text.strip() and is_track_confirm(nl_text)
+        pending
+        and nl_text.strip()
+        and is_track_confirm(nl_text, pending_names=pending_names)
     )
     if confirmed_pending:
         watchlist = list(pending.get("competitors") or [])
