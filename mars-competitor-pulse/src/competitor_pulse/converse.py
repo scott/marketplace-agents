@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from competitor_pulse.persona import help_message, welcome_message
-
-_TEMPLATE_OTHER = (
-    "Didn't quite catch that — want a pulse or a quick how-to?\n\n"
-    "Name companies to watch (e.g. `track FedEx`) or ask **what do you do?**"
+from competitor_pulse.persona import (
+    PULSE_SYSTEM_PROMPT,
+    help_message,
+    other_message,
+    welcome_message,
 )
 
 
@@ -18,20 +18,24 @@ def _llm_reply(intent: str, human_text: str) -> str | None:
             return None
 
         intent_guide = {
-            "chat": "Greet warmly, invite them to name companies to track.",
-            "help": "Explain capabilities, how to track/notify/baselines, and v1 limits.",
+            "chat": (
+                "Greet as Competitor Pulse. Keep who you are, what you watch, "
+                "won't notify without OK, and how to start (three starters). "
+                "Do not start a track run."
+            ),
+            "help": (
+                "Explain how track/pulse works, baseline vs material, notify ask, "
+                "and honest v1 limits (public web only, stub notify)."
+            ),
             "other": "Ask a short clarifying question in character.",
         }.get(intent, "Reply helpfully.")
 
         llm = get_llm(temperature=0.4)
         prompt = (
-            "You are Competitor Pulse — a sharp, dry product/GTM researcher embedded in "
-            "MARS chat. Helpful, not corporate. Contractions OK. No 'Certainly!' or "
-            "helpdesk filler. Stay honest about v1: public web only, stub notify, no "
-            "competitor logins.\n\n"
+            f"{PULSE_SYSTEM_PROMPT}\n\n"
             f"Intent: {intent}. {intent_guide}\n"
-            "Keep it under 120 words. Markdown OK. Do not invent competitor deltas or "
-            "fetch results.\n\n"
+            "Keep it under 160 words. Markdown OK. Do not invent competitor deltas or "
+            "fetch results. Never emit JSON or stage dumps.\n\n"
             f"User: {human_text}\n\n"
             "Reply:"
         )
@@ -49,7 +53,7 @@ def template_reply(intent: str) -> str:
     if intent == "help":
         return help_message()
     if intent == "other":
-        return _TEMPLATE_OTHER
+        return other_message()
     return welcome_message()
 
 

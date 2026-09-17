@@ -20,7 +20,8 @@ _STATE_LIST_PREFIX_RE = re.compile(
 )
 
 _GREETING_DEDUP_RE = re.compile(
-    r"(Hey there|Hey — I'm|Hey, welcome).{0,80}Competitor Pulse",
+    r"(?:Hey there|Hey — I'm|Hey, welcome).{0,80}Competitor Pulse|"
+    r"I'm Competitor Pulse(?:\s*[—-]\s*a research colleague)?",
     re.IGNORECASE,
 )
 

@@ -61,6 +61,8 @@ def test_hi_greeting_full_graph(monkeypatch):
     assert "Acme" not in summary
     assert "Competitor Pulse" in summary
     assert "track" in summary.lower()
+    # Sol P0: welcome must promise no notify without OK
+    assert "without your ok" in summary.lower() or "without your approval" in summary.lower() or "will not notify" in summary.lower()
     summaries = " ".join(result.get("stage_summaries") or [])
     assert "gather:" not in summaries
     assert "analyze:" not in summaries

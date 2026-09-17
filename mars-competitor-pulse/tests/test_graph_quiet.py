@@ -35,7 +35,7 @@ def test_quiet_baseline_no_interrupt(monkeypatch):
     assert result.get("material") is False
     assert not result.get("deltas")
     summary = assistant_summary(result).lower()
-    assert "no changes" in summary or "no material" in summary
+    assert "no changes" in summary or "no material" in summary or "nothing material" in summary
     summaries = result.get("stage_summaries") or []
     assert any("analyze" in s for s in summaries)
     assert any("report" in s for s in summaries)

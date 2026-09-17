@@ -16,7 +16,8 @@ from competitor_pulse.mars_text import (
 )
 
 _GREETING_RE = re.compile(
-    r"(Hey there|Hey — I'm|Hey, welcome).{0,40}Competitor Pulse",
+    r"(?:Hey there|Hey — I'm|Hey, welcome).{0,40}Competitor Pulse|"
+    r"I'm Competitor Pulse",
     re.IGNORECASE,
 )
 

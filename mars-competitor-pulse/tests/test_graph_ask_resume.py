@@ -40,11 +40,12 @@ def test_ask_payload_contract(monkeypatch):
     assert payload.get("pending_action") == "notify"
     assert payload.get("choices") == ["approve", "deny"]
     body = payload.get("body") or ""
-    assert "Material changes:" in body
-    assert "Competitors:" in body
+    assert "Want me to send this pulse notify via" in body
+    assert "material change" in body.lower()
     assert "Highlights:" in body
     assert "Notify draft:" in body
-    assert "Will not:" in body
+    assert "I will not:" in body
+    assert "v1 note:" in body.lower() or "stub" in body.lower()
     assert "approve" in payload.get("choices", [])
     assert "deny" in payload.get("choices", [])
 
