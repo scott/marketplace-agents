@@ -1,0 +1,12 @@
+{
+  "dependencies": [
+    ".",
+    "langchain_openai"
+  ],
+  "graphs": {
+    "agent": {
+      "path": "./src/mars_pulse_diag/graph.py:graph",
+      "description": "Pulse diag — proves whether MARS injects watchlist JSON independent of Pulse graph"
+    }
+  }
+}

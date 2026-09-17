@@ -1,0 +1,7 @@
+langgraph>=1.0
+langchain-openai>=0.2
+langchain-core>=0.3
+pytest>=8.0
+langgraph-checkpoint>=2.0
+httpx>=0.27
+-e ./mars-pulse-diag
