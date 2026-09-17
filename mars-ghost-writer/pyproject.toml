@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ghost-writer"
+version = "0.1.0"
+description = "Ghost Writer — LangGraph agent for blog research, drafting, and publishing"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+  "langgraph>=1.0",
+  "langchain-openai>=1.0.0",
+  "langchain-classic>=1.0.0",
+  "langchain-core>=1.4.0",
+  "duckduckgo-search==8.1.1",
+  "requests==2.32.5",
+  "PyJWT==2.11.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "responses>=0.26.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

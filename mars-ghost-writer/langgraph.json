@@ -1,0 +1,13 @@
+{
+  "dependencies": [
+    ".",
+    "langchain_openai",
+    "langchain_classic"
+  ],
+  "graphs": {
+    "agent": {
+      "path": "./src/ghost_writer/graph.py:graph",
+      "description": "Ghost Writer — blog research, drafting, and publish with human approval in chat"
+    }
+  }
+}

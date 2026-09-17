@@ -1,0 +1,24 @@
+# Example MARS / Managed Agents spec. Do not commit real API keys.
+
+name: mars-ghost-writer
+agent: langgraph
+template: langgraph
+size: mv-2vcpu-4gb
+persistent_workspace: true
+
+env:
+  FRAMEWORK_REPO: "https://github.com/digitalocean/marketplace-agents.git"
+  FRAMEWORK_REPO_SHA: "<exact-commit-sha>"
+  FRAMEWORK_SUBDIR: "mars-ghost-writer"
+  HARNESS_INFERENCE_BASE_URL: "https://inference.do-ai.run/v1"
+  HARNESS_INFERENCE_MODEL: deepseek-v4-pro
+  BLOG_TOPIC: "AI, Cloud Computing, DevOps"
+
+secrets:
+  HARNESS_INFERENCE_API_KEY: "<DO_INFERENCE_KEY>"
+  BLOG_TYPE: "ghost"
+  BLOG_URL: "https://myblog.com"
+  BLOG_API_KEY: "<ghost-id:secret or wp-user:app_password>"
+
+permissions:
+  default: ask
