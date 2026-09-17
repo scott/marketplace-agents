@@ -108,9 +108,7 @@ def main() -> int:
     if payload.get("choices") != ["approve", "deny"]:
         print("SMOKE FAIL: choices must be approve/deny", file=sys.stderr)
         return 1
-    if not str(payload.get("title") or "").startswith(
-        "Want me to send this pulse notify via"
-    ):
+    if payload.get("title") != "Notify about competitor changes?":
         print("SMOKE FAIL: bad ask title", file=sys.stderr)
         return 1
     if payload.get("pending_action") != "notify":

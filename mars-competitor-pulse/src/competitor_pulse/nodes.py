@@ -18,7 +18,7 @@ from competitor_pulse.chat import (
     parse_track_message,
 )
 from competitor_pulse.converse import conversational_reply
-from competitor_pulse.intent import classify_intent
+from competitor_pulse.intent import classify_intent, is_track_confirm, is_track_deny
 from competitor_pulse.draft_llm import synthesize_material_draft
 from competitor_pulse.hygiene import hygiene_text
 from competitor_pulse.persona import (
@@ -29,14 +29,18 @@ from competitor_pulse.persona import (
     deny_message,
     first_look_message,
     material_chat_message,
+    NOTIFY_ASK_TITLE,
+    pulse_start_message,
     quiet_message,
+    track_deny_message,
     track_plan_message,
+    unresolved_companies_message,
 )
-from competitor_pulse.intent import is_track_confirm
 from competitor_pulse.intake_parse import (
     is_merge_request,
     parse_notify_from_message,
     parse_watchlist_from_message,
+    watch_names_to_competitors,
 )
 from competitor_pulse.pulse_diff import (
     allow_network,
@@ -114,7 +118,11 @@ def _competitors_from_payload(payload: dict[str, Any]) -> list[dict[str, Any]] |
     return None
 
 
-def _state_competitors(state: PulseState | dict[str, Any]) -> list[dict[str, Any]]:
+def _state_competitors(
+    state: PulseState | dict[str, Any],
+    *,
+    include_watch_names: bool = False,
+) -> list[dict[str, Any]]:
     internal = state.get("internal")
     if isinstance(internal, dict):
         for key in ("competitors", "watchlist"):
@@ -125,6 +133,10 @@ def _state_competitors(state: PulseState | dict[str, Any]) -> list[dict[str, Any
         legacy = state.get(key)
         if isinstance(legacy, list):
             return list(legacy)
+    if include_watch_names:
+        watch_names = state.get("watch_names")
+        if isinstance(watch_names, list) and watch_names:
+            return watch_names_to_competitors(watch_names)
     return []
 
 
@@ -208,6 +220,7 @@ def _mars_safe_pulse_update(state: dict[str, Any]) -> dict[str, Any]:
         "notified",
         "stage_summaries",
         "blocked_reason",
+        "pending_track",
     )
     for key in passthrough:
         if key in state:
@@ -392,10 +405,7 @@ def _resolve_competitors(
             "from_nl": True,
             "blocked": True,
             "notify": parsed.get("notify"),
-            "blocked_summary": (
-                "Could not resolve companies to track. "
-                "Please name specific competitors (e.g. OpenAI, Anthropic, Cursor)."
-            ),
+            "blocked_summary": unresolved_companies_message(),
         }
 
     # No new tracking names in this message — keep existing watchlist if any.
@@ -457,9 +467,21 @@ def intake(state: PulseState) -> dict[str, Any]:
     overlay = _apply_intake_overlay(state, intake_json or {})
     nl_text = "" if looks_like_watchlist_json(human_text) else human_text
 
+    pending = _pending_track(state)
+
+    if pending and nl_text.strip() and is_track_deny(nl_text):
+        return {
+            "intent": "chat",
+            "status": "chat",
+            "material": False,
+            "skipped": False,
+            "notified": False,
+            "pending_track": None,
+            **_assistant_reply(track_deny_message(), None),
+        }
+
     parsed_nl = parse_watchlist_from_message(nl_text) if nl_text else {}
     overlay_competitors = _competitors_from_payload(overlay) if overlay else None
-    pending = _pending_track(state)
     intent = classify_intent(
         nl_text,
         state_watchlist=_state_competitors(state),
@@ -487,9 +509,7 @@ def intake(state: PulseState) -> dict[str, Any]:
         resolved = _resolve_competitors(state, overlay, nl_text)
         watchlist = list(resolved.get("competitors") or [])
         if resolved.get("blocked"):
-            blocked_summary = resolved.get("blocked_summary") or (
-                "Could not resolve companies to track."
-            )
+            blocked_summary = resolved.get("blocked_summary") or unresolved_companies_message()
             return {
                 "status": "blocked",
                 "notify": False,
@@ -526,19 +546,17 @@ def intake(state: PulseState) -> dict[str, Any]:
             allow_net = allow_network()
 
         merge_added: list[str] | None = None
+        merge_current: list[str] | None = None
         if parsed_nl.get("is_merge") or is_merge_request(nl_text):
-            state_list = _state_competitors(state)
+            state_list = _state_competitors(state, include_watch_names=True)
             if state_list:
+                merge_current = _watch_names_from(state_list)
                 incoming_names = {
                     (item.get("name") or "").strip()
                     for item in watchlist
                     if (item.get("name") or "").strip()
                 }
-                existing_names = {
-                    (item.get("name") or "").strip()
-                    for item in state_list
-                    if (item.get("name") or "").strip()
-                }
+                existing_names = set(merge_current)
                 added = sorted(incoming_names - existing_names)
                 if added:
                     merge_added = added
@@ -548,7 +566,8 @@ def intake(state: PulseState) -> dict[str, Any]:
             names,
             notify=notify,
             channel=channel,
-            allow_net=allow_net,
+            has_baseline=bool(_state_competitors(state, include_watch_names=True)),
+            merge_current=merge_current,
             merge_added=merge_added,
         )
         pending_payload = {
@@ -595,9 +614,7 @@ def intake(state: PulseState) -> dict[str, Any]:
         from_nl = bool(resolved.get("from_nl"))
 
     if resolved.get("blocked"):
-        blocked_summary = resolved.get("blocked_summary") or (
-            "Could not resolve companies to track."
-        )
+        blocked_summary = resolved.get("blocked_summary") or unresolved_companies_message()
         return {
             "status": "blocked",
             "notify": False,
@@ -647,9 +664,12 @@ def intake(state: PulseState) -> dict[str, Any]:
             allow_net = allow_network()
 
     from_chat = bool(from_nl or nl_text.strip())
-    chat_ack = format_watch_ack(
-        watchlist, allow_net=allow_net, from_chat=from_chat
-    )
+    if confirmed_pending:
+        chat_ack = pulse_start_message(_watch_names_from(watchlist))
+    else:
+        chat_ack = format_watch_ack(
+            watchlist, allow_net=allow_net, from_chat=from_chat
+        )
     pulse_update: dict[str, Any] = {
         "intent": "pulse",
         **_competitors_update(state, watchlist),
@@ -1044,7 +1064,7 @@ def ask(state: PulseState) -> dict[str, Any]:
         )
     )
     payload = {
-        "title": f"Want me to send this pulse notify via {channel}?",
+        "title": NOTIFY_ASK_TITLE,
         "body": body,
         "pending_action": "notify",
         "channel": channel,
@@ -1212,10 +1232,14 @@ def report(state: PulseState) -> dict[str, Any]:
     attach_brief = state.get("brief_md") or None
     if out_status == "baseline":
         attach_brief = None
-    return {
+    out: dict[str, Any] = {
         "status": out_status,
         "artifacts": artifacts,
         "next_hint": next_hint,
         "stage_summaries": _append_summary(state, "report: complete"),
         **_assistant_reply(summary, attach_brief),
     }
+    watchlist = _state_competitors(state)
+    if watchlist:
+        out["internal"] = {"competitors": watchlist}
+    return out

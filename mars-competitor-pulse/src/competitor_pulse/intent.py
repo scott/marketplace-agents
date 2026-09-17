@@ -44,6 +44,16 @@ _TRACK_CONFIRM_RE = re.compile(
     re.IGNORECASE,
 )
 
+_TRACK_DENY_RE = re.compile(
+    r"^(?:no|n|cancel|stop|never mind)\s*[!.?]*$",
+    re.IGNORECASE,
+)
+
+_SKIP_CONFIRM_RE = re.compile(
+    r"\b(track now|run it|go ahead)\b|(?:—|-)\s*go\b|\bnow\s*[!.?]*$",
+    re.IGNORECASE,
+)
+
 _HELP_RE = re.compile(
     r"\b("
     r"what\s+do\s+you\s+do|"
@@ -139,7 +149,7 @@ def is_track_confirm(
     text: str,
     pending_names: list[str] | None = None,
 ) -> bool:
-    """True when the operator confirms a pending track plan.
+    """True when the operator confirms a pending track plan (§10 confirm cues).
 
     Matches bare acks/actions and combined phrases ("yes, track it"). When
     ``pending_names`` is provided, also matches ack + track <pending name>
@@ -153,6 +163,19 @@ def is_track_confirm(
     if pending_names:
         return _is_confirm_with_pending_names(stripped, pending_names)
     return False
+
+
+def is_track_deny(text: str) -> bool:
+    """True when the operator declines a pending track plan (§10 deny cues)."""
+    stripped = (text or "").strip()
+    if not stripped:
+        return False
+    return bool(_TRACK_DENY_RE.match(stripped))
+
+
+def is_skip_confirm_cue(text: str) -> bool:
+    """§10 skip-confirm when explicit run cue in same turn as track intent."""
+    return bool(_SKIP_CONFIRM_RE.search((text or "").strip()))
 
 
 def is_help_message(text: str) -> bool:
@@ -228,8 +251,14 @@ def classify_intent(
         if is_track_confirm(stripped, pending_names=pending_names):
             return "pulse"
 
-    # 4. Resolved competitors from NL → track_plan (discuss → plan → ask)
+    # 3b. Decline pending track plan → chat (handled in intake; classify as chat)
+    if pending_track and stripped and is_track_deny(stripped):
+        return "chat"
+
+    # 4. Resolved competitors from NL → track_plan (or pulse if skip-confirm cue)
     if parsed.get("competitors") or parsed.get("watchlist"):
+        if is_skip_confirm_cue(stripped):
+            return "pulse"
         return "track_plan"
 
     # 5. Clear help (before tracking keyword "watch" in help questions)

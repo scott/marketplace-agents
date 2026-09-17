@@ -225,6 +225,26 @@ def _copy_watch_item(canonical: str) -> dict[str, Any]:
     return {"name": entry["name"], "urls": dict(entry.get("urls") or {})}
 
 
+def watch_names_to_competitors(names: list[str]) -> list[dict[str, Any]]:
+    """Rebuild watch items from MARS-safe watch_names (multi-turn merge)."""
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for raw in names or []:
+        name = (raw or "").strip()
+        if not name:
+            continue
+        canonical = _resolve_name_to_canonical(name) or name
+        key = canonical.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        if canonical in _KNOWN_COMPANIES:
+            out.append(_copy_watch_item(canonical))
+        else:
+            out.append({"name": name, "urls": {}})
+    return out
+
+
 def _find_aliases_in_text(text: str) -> list[str]:
     """Return canonical company names found in text, in order of appearance."""
     lowered = text.lower()
