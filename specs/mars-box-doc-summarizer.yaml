@@ -1,0 +1,43 @@
+# Box Doc Summarizer — brief every document in one Box folder, write one
+# executive summary (with a link per file) back to the folder after approval.
+# Interactive spec. Approve/deny the "Write executive summary to Box?" ask in chat.
+# No real secrets in this file. Pass them with --secret.
+# Box access: Box Mount (private preview) is the primary mode. The agent
+# downloads box-mount (BOX_MOUNT_BINARY_URL, pinned by BOX_MOUNT_SHA256; fails
+# closed without the pin), syncs the folder to BOX_MOUNT_PATH, reads files
+# from the mount and writes EXECUTIVE-SUMMARY.md back through it.
+# The Box API (same JWT) is used only for folder name, per-file links, and
+# public shared links, which Box Mount cannot create. Set
+# BOX_ALLOW_API_FALLBACK=1 to allow API reads/writes if the mount fails.
+name: mars-box-doc-summarizer
+agent: langgraph
+template: langgraph
+size: mars-2vcpu-4gb
+env:
+  FRAMEWORK_REPO: "https://github.com/scott/marketplace-agents.git"
+  FRAMEWORK_REPO_SHA: "72e1fec2ba7697655313712cdb99103d188d51a6"
+  FRAMEWORK_SUBDIR: "mars-box-doc-summarizer"
+  HARNESS_INFERENCE_BASE_URL: "https://inference.do-ai.run/v1"
+  HARNESS_INFERENCE_MODEL: deepseek-v4-pro
+  BOX_FOLDER_ID: "<box-folder-id>"
+  BOX_MOUNT_PATH: /workspace/box
+  SUMMARY_FILENAME: EXECUTIVE-SUMMARY.md
+  MAX_FILES: "50"
+  # box-mount-0.6.0-linux-x86_64.tar.gz
+  BOX_MOUNT_SHA256: "b8bd648baefab5addaa8bc1098b942cf246d2a800aeb6368fd472b0c9b9f5ade"
+  BOX_ALLOW_API_FALLBACK: "0"
+  # Set to "open" to create public shared links for files that lack one.
+  BOX_SHARED_LINK_ACCESS: open
+secrets:
+  HARNESS_INFERENCE_API_KEY: "<DO_INFERENCE_KEY>"
+  # Developer Console JWT config JSON (whole file contents).
+  BOX_JWT_CONFIG_JSON: "<box-jwt-config-json>"
+  # Required for Box Mount mode: direct download of the preview build (secret).
+  BOX_MOUNT_BINARY_URL: "<box-mount-direct-download-url>"
+tools:
+  - do.actions
+permissions:
+  default: ask
+  rules:
+    - tool: mcp
+      action: allow

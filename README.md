@@ -12,6 +12,7 @@ Each agent lives in its own subdirectory. Pin with the same `FRAMEWORK_REPO` + `
 | `mars-nightly-repo-audit` | Nightly Repo Audit |
 | `mars-competitor-pulse` | Competitor Pulse |
 | `mars-ghost-writer` | Ghost Writer |
+| `mars-box-doc-summarizer` | Box Doc Summarizer |
 
 ## Install and run with doctl (no Marketplace)
 
@@ -37,7 +38,7 @@ template: langgraph
 env:
   FRAMEWORK_REPO: "https://github.com/digitalocean/marketplace-agents.git"
   FRAMEWORK_REPO_SHA: "<exact-commit-sha>"
-  FRAMEWORK_SUBDIR: "mars-competitor-pulse"  # or mars-sourced-research-desk / mars-nightly-repo-audit / mars-ghost-writer
+  FRAMEWORK_SUBDIR: "mars-competitor-pulse"  # or mars-sourced-research-desk / mars-nightly-repo-audit / mars-ghost-writer / mars-box-doc-summarizer
   HARNESS_INFERENCE_BASE_URL: "https://inference.do-ai.run/v1"
   HARNESS_INFERENCE_MODEL: deepseek-v4-pro
 secrets:

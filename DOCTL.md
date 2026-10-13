@@ -47,6 +47,7 @@ Ready-to-edit manifests live under `specs/`:
 | `specs/mars-nightly-repo-audit.yaml` | Nightly Repo Audit | `mars-nightly-repo-audit` |
 | `specs/mars-competitor-pulse.yaml` | Competitor Pulse | `mars-competitor-pulse` |
 | `specs/mars-ghost-writer.yaml` | Ghost Writer | `mars-ghost-writer` |
+| `specs/mars-box-doc-summarizer.yaml` | Box Doc Summarizer | `mars-box-doc-summarizer` |
 
 Before create, pin a real commit and (if needed) swap the repo URL:
 
@@ -203,6 +204,14 @@ Or pass a PAT with `--secret GITHUB_TOKEN=...`. Harness uses it only for a shall
 - **Competitor Pulse** — name companies in plain English; notify/ask is off unless you ask to alert. First run establishes a baseline (“first look”), not a fake material crisis.
 - **Nightly Repo Audit** — chat accepts `https://github.com/owner/name` or `owner/name` and clones that ref. Pass required secret `GITHUB_TOKEN` (contents write) for the push, plus `do.actions` and a GitHub Connection to open the draft PR. Interactive spec is `specs/mars-nightly-repo-audit.yaml` (`permissions.default: ask`). Daily cron uses `specs/mars-nightly-repo-audit-trigger.yaml` (`permissions.default: allow`); see `listings/nightly-repo-audit.md`.
 - **Ghost Writer** — chat drafts need confirmation before publish; set blog secrets for CMS write.
+- **Box Doc Summarizer** — `Summarize folder <id>`; approve writes `EXECUTIVE-SUMMARY.md` back to the folder. Box Mount demo: secrets `BOX_JWT_CONFIG_JSON` (JWT app, service account invited to the folder) and `BOX_MOUNT_BINARY_URL`, plus env `BOX_MOUNT_SHA256` (required; fails closed). The API is used only for links and shared links unless `BOX_ALLOW_API_FALLBACK=1`. Example:
+
+  ```bash
+  doctl agent create --spec specs/mars-box-doc-summarizer.yaml \
+    --secret HARNESS_INFERENCE_API_KEY=@~/.secrets/do-inference.key \
+    --secret BOX_JWT_CONFIG_JSON=@~/.secrets/box-jwt.json \
+    --secret BOX_MOUNT_BINARY_URL=@~/.secrets/box-mount-url.txt
+  ```
 
 Per-agent behavior, smoke inputs, and local pytest paths are in each subdirectory’s `README.md`.
 

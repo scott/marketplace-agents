@@ -1,0 +1,5 @@
+Customer feedback digest for September. Customers praise reliability but say onboarding is slow and documentation is hard to search.
+
+Enterprise accounts repeatedly request SSO and audit logs. Two renewals depend on SSO shipping this quarter.
+
+Smaller teams want a cheaper starter tier and clearer pricing.
